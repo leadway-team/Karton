@@ -52,7 +52,7 @@ int main(int argc, char** argv) {
     ZyanU32 mode = (ehdr.e_machine == EM_X86_64) ? ZYDIS_MACHINE_MODE_LONG_64 : ZYDIS_MACHINE_MODE_LEGACY_32;
     ZyanU32 width = (ehdr.e_machine == EM_X86_64) ? ZYDIS_STACK_WIDTH_64 : ZYDIS_STACK_WIDTH_32;
     
-    if (ehdr.e_type != ET_EXEC) {
+    if (ehdr.e_type != ET_EXEC && ehdr.e_type != ET_DYN) {
         printf("Not executable file, internal error code 6.\n");
         return 6;
     }

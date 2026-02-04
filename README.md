@@ -1,13 +1,9 @@
-# Картон тхе декомпилер
-Задолбались использовать багованные или проприетарные декомпиляторы?  
-ЗНАКОМЬТЕСЬ: ЕЩЕ БОЛЕЕ БАГОВАННЫЙ ДЕКОМПИЛЯТОР! (зато open-source)  
+# Karton the x86_64 Emulator
+Tired of laggy or proprietary x86_64 emulators?  
+Welcome to Project named Karton.  
+An even more buggy emulator (but open-source, hehe)  
   
-Ну а если серьезно, это декомпилятор, умеющий только в x86_64 и ELF.  
-По факту это пример "дружбы" libelf и zydis.  
-Фиговый, зато рабочий. Нуу, полу-рабочий, я заметил, что он не со всеми работает.  
-
-## На данный момент кол-во читаемых байт внутри _start захардкожены, и ходить в другие функции он не умеет.
-### Но это будет исправлено, ведь так?)
-Пулл реквесты не принимаю.  
-  
-Ах да, я использовал c-vector: https://github.com/Mashpoe/c-vector  
+## We used:
+[c-vector](https://github.com/Mashpoe/c-vector) by mashopoe  
+[zydis](https://github.com/zyantific/zydis) by zyantific  
+[LLVM](https://github.com/llvm/llvm-project) by open-(and not verу)source community  

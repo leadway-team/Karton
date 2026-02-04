@@ -9,56 +9,56 @@
 #include <gelf.h>
 
 int main(int argc, char** argv) {
-    printf("От создателей $sudo-bot, TestPrefSumm, Vodka, и udpping/tcpping...\nВстречайте: КАРТОН тхе ДЕКОМПИЛЕР 🔥🔥🔥\n");
+    printf("Karton Emu ; 02.2026\n");
     
     if (argc != 2) {
-        printf("Больше/меньше 1 аргумента не принимаю, ну ты в курсе, ты либо дай один файл, либо не запускай эту программу.\nСворачиваемся.\n");
+        printf("The number of arguments is strictly 2.");
         return 1;
     }
     
     if (elf_version(EV_CURRENT) == EV_NONE) {
-        printf("Чет как-то не вышло, не фортануло, ну ты в курсе, сворачиваемся.\n");
+        printf("Libelf error, internal error code 1.\n");
         return 1;
     }
     
     int fd = open(argv[1], O_RDONLY, 0);
     if (fd < 0) {
-        printf("Пососи, выдал те код ошибки open, думай дальше сам, сворачиваемся.\n");
-        return fd;
+        printf("Open file error, internal error code 2, \"open\" error code %d.\n", fd);
+        return 2;
     }
     
     Elf *e = elf_begin(fd, ELF_C_READ, NULL);
     if (e == NULL) {
-        printf("Афигеть, elf_begin в чем-то...Нуу, сам понимаешь, сворачиваемся.\n");
-        return 1;
+        printf("Libelf error, internal error code 3.\n");
+        return 3;
     }
     
     if (elf_kind(e) != ELF_K_ELF) {
-        printf("Откуда ты вообще достал этот файл? Это не ELF, если это PE - иди Vodka мучай, не нас.\nСворачиваемся.\n");
-        return 1;
+        printf("Not ELF file, internal error code 3.\n");
+        return 3;
     }
     
     GElf_Ehdr ehdr;
     if (gelf_getehdr(e, &ehdr) == NULL) {
-        printf("Да ты издеваешься, все, я лив, сворачиваемся.\n");
-        return 1;
+        printf("Libelf error, internal error code 4.\n");
+        return 4;
     }
     
     if (ehdr.e_machine != EM_X86_64 && ehdr.e_machine != EM_386) {
-        printf("Ой, все, пока, сворачиваемся.\n");
-        return 1;
+        printf("Not x86_64 or x86 executable, internal error code 5.\n");
+        return 5;
     }
     
     ZyanU32 mode = (ehdr.e_machine == EM_X86_64) ? ZYDIS_MACHINE_MODE_LONG_64 : ZYDIS_MACHINE_MODE_LEGACY_32;
     ZyanU32 width = (ehdr.e_machine == EM_X86_64) ? ZYDIS_STACK_WIDTH_64 : ZYDIS_STACK_WIDTH_32;
     
     if (ehdr.e_type != ET_EXEC) {
-        printf("Да иди ты нафиг, это не executable file! Сворачиваемся.\n");
-        return 1;
+        printf("Not executable file, internal error code 6.\n");
+        return 6;
     }
     
     ZyanU64 entry_point = ehdr.e_entry;
-    printf("Фух. Мы прошли проверки 🎉\nВот entry point: %lu\n", entry_point);
+    printf("All checks done 🎉\nEntry point address: %lu\n", entry_point);
     
     ZyanUSize phnum;
     elf_getphdrnum(e, &phnum);
@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
         gelf_getphdr(e, i, &phdr);
         
         if (phdr.p_type == PT_LOAD && (phdr.p_flags & PF_X)) {
-            printf("Уххх экзекьютабле секция номер %zu с размером %lu \n", i, phdr.p_memsz);
+            printf("EXEC SECTION №%zu ; SIZE %lu \n", i, phdr.p_memsz);
             
             ZyanU8 *data = malloc(phdr.p_filesz);
             lseek(fd, phdr.p_offset, SEEK_SET);
@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
             
             ZyanU64 entry_offset = entry_point - phdr.p_vaddr;
             if (entry_offset < phdr.p_filesz) {
-                printf("Ухх энтри поинт с оффсетом %lu\n", entry_offset);
+                printf("ENTRY OFFSET %lu\n", entry_offset);
                 ZydisDecoder decoder;
                 ZydisDecoderInit(&decoder, mode, width);
                 
@@ -101,16 +101,16 @@ int main(int argc, char** argv) {
                     if (instruction.mnemonic == ZYDIS_MNEMONIC_MOV) {
                         if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
                             if (operands[0].reg.value == ZYDIS_REGISTER_RAX) {
-                                //TODO: научится определять, signed или unsigned
+                                //TODO: determine is signed or unsigned
                                 rax = operands[1].imm.value.s;
-                                //printf("Ой, простите, вмешаюсь. RAX у нас: %ld\n", rax);
+                                //printf("RAX REDIFINED: %ld\n", rax);
                             }
                         }
                     }
                     
                     if (instruction.mnemonic == ZYDIS_MNEMONIC_SYSCALL) {
                         if (rax == 60) {
-                            printf("Ну, где-то здесь программа должна закончится по идее.\n");
+                            printf("sys_exit syscall ; program is ended\n");
                             break;
                         }
                     }

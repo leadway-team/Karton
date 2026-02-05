@@ -1,0 +1,4 @@
+{
+  "60": { "native": 93, "argc": 1, "args": ["rdi"] },
+  "1":  { "native": 64, "argc": 3, "args": ["rdi", "rsi", "rdx"] }
+}

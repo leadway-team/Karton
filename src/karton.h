@@ -1,8 +1,14 @@
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <inttypes.h>
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/syscall.h>
+
+#include <json-c/json.h>
+#include <json-c/json_util.h>
 
 #include <Zydis/Zydis.h>
 #include <libelf.h>

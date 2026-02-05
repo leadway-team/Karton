@@ -1,12 +1,32 @@
-#include <stdio.h>
-#include <inttypes.h>
-#include <fcntl.h>
-#include <string.h>
-#include <unistd.h>
+#include "karton.h"
 
-#include <Zydis/Zydis.h>
-#include <libelf.h>
-#include <gelf.h>
+LLVMValueRef get_reg_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_type, int reg_idx) {
+    LLVMValueRef indices[] = {
+        LLVMConstInt(LLVMInt32Type(), 0, 0),
+        LLVMConstInt(LLVMInt32Type(), 0, 0),
+        LLVMConstInt(LLVMInt32Type(), reg_idx, 0)
+    };
+    return LLVMBuildInBoundsGEP2(builder, cpu_type, cpu_ptr, indices, 3, "reg_ptr");
+}
+
+int get_register_index(ZydisRegister reg) {
+    if (reg >= ZYDIS_REGISTER_RAX && reg <= ZYDIS_REGISTER_RDI) {
+        return reg - ZYDIS_REGISTER_RAX;
+    }
+    if (reg >= ZYDIS_REGISTER_R8 && reg <= ZYDIS_REGISTER_R15) {
+        return 8 + (reg - ZYDIS_REGISTER_R8);
+    }
+    
+    return -1; 
+}
+
+void helper_syscall(CPUState *cpu) {
+    uint64_t rax = cpu->gprs[0]; // RAX
+    if (rax == 60) { // sys_exit
+        printf("Exit called with code %ld\n", cpu->gprs[7]); // RDI
+        //exit(cpu->gprs[7]);
+    }
+}
 
 int main(int argc, char** argv) {
     printf("Karton Emu ; 02.2026\n");
@@ -57,14 +77,41 @@ int main(int argc, char** argv) {
         return 6;
     }
     
+    printf("First step is complete.\n");
+    
+    CPUState cpu = {0};
+    LLVMTypeRef i64 = LLVMInt64Type();
+    LLVMTypeRef cpu_struct_type = LLVMStructCreateNamed(LLVMGetGlobalContext(), "CPUState");
+    
+    LLVMTypeRef array_type = LLVMArrayType(i64, 16);
+    LLVMTypeRef fields[] = { array_type, i64 };
+    LLVMStructSetBody(cpu_struct_type, fields, 2, 0);
+    LLVMTypeRef cpu_ptr_type = LLVMPointerType(cpu_struct_type, 0);
+    
+    LLVMModuleRef mod = LLVMModuleCreateWithName("karton_module");
+    LLVMTypeRef ret_type = LLVMFunctionType(LLVMVoidType(), &cpu_ptr_type, 1, 0);
+    LLVMValueRef func = LLVMAddFunction(mod, "start", ret_type);
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlock(func, "entry");
+    LLVMBuilderRef builder = LLVMCreateBuilder();
+    LLVMPositionBuilderAtEnd(builder, entry);
+    
+    LLVMValueRef cpu_ptr = LLVMGetParam(func, 0);
+    LLVMValueRef indices[] = {
+        LLVMConstInt(LLVMInt32Type(), 0, 0),
+        LLVMConstInt(LLVMInt32Type(), 0, 0),
+        LLVMConstInt(LLVMInt32Type(), 0, 0)
+    };
+    
+    LLVMTypeRef param_types[] = { cpu_ptr_type };
+    LLVMTypeRef func_type = LLVMFunctionType(LLVMVoidType(), param_types, 1, 0);
+    LLVMValueRef syscall_handler = LLVMAddFunction(mod, "helper_syscall", func_type);
+    
     ZyanU64 entry_point = ehdr.e_entry;
-    printf("All checks done 🎉\nEntry point address: %lu\n", entry_point);
+    printf("Preparing is done 🎉\nEntry point address: %lu\n", entry_point);
     
     ZyanUSize phnum;
     elf_getphdrnum(e, &phnum);
     GElf_Phdr phdr;
-    
-    int64_t rax = 0;
     
     for (ZyanUSize i = 0; i < phnum; i++) {
         gelf_getphdr(e, i, &phdr);
@@ -100,19 +147,17 @@ int main(int argc, char** argv) {
                     
                     if (instruction.mnemonic == ZYDIS_MNEMONIC_MOV) {
                         if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
-                            if (operands[0].reg.value == ZYDIS_REGISTER_RAX) {
-                                //TODO: determine is signed or unsigned
-                                rax = operands[1].imm.value.s;
-                                //printf("RAX REDIFINED: %ld\n", rax);
+                            int reg_idx = get_register_index(operands[0].reg.value);
+                            if (reg_idx != -1) {
+                                LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
+                                LLVMBuildStore(builder, LLVMConstInt(i64, operands[1].imm.value.s, 0), reg_ptr);
                             }
                         }
                     }
                     
                     if (instruction.mnemonic == ZYDIS_MNEMONIC_SYSCALL) {
-                        if (rax == 60) {
-                            printf("sys_exit syscall ; program is ended\n");
-                            break;
-                        }
+                        LLVMValueRef args[] = { cpu_ptr };
+                        LLVMBuildCall2(builder, func_type, syscall_handler, args, 1, "");
                     }
                     
                     offset += instruction.length;
@@ -124,6 +169,32 @@ int main(int argc, char** argv) {
         }
     }
     
+    LLVMBuildRetVoid(builder);
+    LLVMLinkInMCJIT();
+    LLVMInitializeNativeTarget();
+    LLVMInitializeNativeAsmPrinter();
+    
+    LLVMExecutionEngineRef engine;
+    
+    char *error = NULL;
+    if (LLVMCreateExecutionEngineForModule(&engine, mod, &error) != 0) {
+        printf("Execution engine error, internal error code 6, engine error code %s.\n", error);
+        return 6;
+    }
+    LLVMAddGlobalMapping(engine, syscall_handler, &helper_syscall);
+    
+    uintptr_t func_ptr = (uintptr_t)LLVMGetFunctionAddress(engine, "start");
+    void (*compiled_start)(CPUState*) = (void (*)(CPUState*))func_ptr;
+    
+    printf("Starting JIT execution...\n");
+    compiled_start(&cpu);
+    
+    printf("No segfault? Uh oh, RDI: %ld\n", cpu.gprs[7]);
+    
+    LLVMDumpModule(mod);
+    
+    LLVMDisposeBuilder(builder);
+    LLVMDisposeExecutionEngine(engine);
     elf_end(e);
     close(fd);
     return 0;

@@ -133,6 +133,8 @@ int main(int argc, char** argv) {
                 ZydisDecodedInstruction instruction;
                 ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
                 
+                CPUState dcpu = {0};
+                
                 while (offset < phdr.p_filesz && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, data + offset, phdr.p_filesz - offset, &instruction, operands))) {
                     printf("%016" PRIX64 "  ", runtime_address);
                     
@@ -140,19 +142,63 @@ int main(int argc, char** argv) {
                     ZydisFormatterFormatInstruction(&formatter, &instruction, operands, instruction.operand_count_visible, buffer, sizeof(buffer), runtime_address, ZYAN_NULL);
                     puts(buffer);
                     
-                    if (instruction.mnemonic == ZYDIS_MNEMONIC_MOV) {
-                        if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
-                            int reg_idx = get_register_index(operands[0].reg.value);
-                            if (reg_idx != -1) {
-                                LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
-                                LLVMBuildStore(builder, LLVMConstInt(i64, operands[1].imm.value.s, 0), reg_ptr);
+                    switch (instruction.mnemonic) {
+                        case ZYDIS_MNEMONIC_MOV:
+                            if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+                                int reg_idx = get_register_index(operands[0].reg.value);
+                                if (reg_idx != -1) {
+                                    LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
+                                    LLVMBuildStore(builder, LLVMConstInt(i64, operands[1].imm.value.s, 0), reg_ptr);
+                                    dcpu.gprs[reg_idx] = operands[1].imm.value.s;
+                                }
+                            } else {
+                                int reg_idx  = get_register_index(operands[0].reg.value);
+                                int reg_sidx = get_register_index(operands[1].reg.value);
+                                if (reg_idx != -1 && reg_sidx) {
+                                    LLVMValueRef reg_ptr1 = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
+                                    LLVMValueRef reg_ptr2 = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_sidx);
+                                    LLVMBuildStore(builder, LLVMBuildLoad2(builder, i64, reg_ptr2, "reg_ptr2"), reg_ptr1);
+                                    dcpu.gprs[reg_idx] = dcpu.gprs[reg_sidx];
+                                }
                             }
-                        }
-                    }
-                    
-                    if (instruction.mnemonic == ZYDIS_MNEMONIC_SYSCALL) {
-                        LLVMValueRef args[] = { cpu_ptr };
-                        LLVMBuildCall2(builder, func_type, syscall_handler, args, 1, "");
+                            break;
+                        
+                        case ZYDIS_MNEMONIC_XOR:
+                            if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
+                                int reg_idx = get_register_index(operands[0].reg.value);
+                                if (reg_idx != -1) {
+                                    LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
+                                    LLVMValueRef old_tmp = LLVMBuildLoad2(builder, i64, reg_ptr, "old_tmp");
+                                    
+                                    LLVMBuildStore(builder, LLVMBuildXor(builder, LLVMBuildLoad2(builder, i64, reg_ptr, "load_tmp"), 
+                                                                LLVMConstInt(i64, operands[1].imm.value.s, 0), "xor_tmp"), reg_ptr);
+                                    dcpu.gprs[reg_idx] = dcpu.gprs[reg_idx] ^ operands[1].imm.value.s;
+                                }
+                            } else {
+                                int reg_idx  = get_register_index(operands[0].reg.value);
+                                int reg_sidx = get_register_index(operands[1].reg.value);
+                                if (reg_idx != -1 && reg_sidx) {
+                                    LLVMValueRef reg_ptr1 = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
+                                    LLVMValueRef reg_ptr2 = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_sidx);
+                                    LLVMBuildStore(builder, LLVMBuildXor(builder, LLVMBuildLoad2(builder, i64, reg_ptr1, "load_tmp"), 
+                                                                       LLVMBuildLoad2(builder, i64, reg_ptr2, "reg_ptr2"), reg_ptr1);
+                                    dcpu.gprs[reg_idx] = dcpu.gprs[reg_idx] ^ dcpu.gprs[reg_sidx];
+                                }
+                            }
+                            break;
+                        
+                        case ZYDIS_MNEMONIC_SYSCALL:
+                            LLVMValueRef args[] = { cpu_ptr };
+                            LLVMBuildCall2(builder, func_type, syscall_handler, args, 1, "");
+                            
+                            if (dcpu.gprs[0] == 60) { // sys_exit
+                                i = phnum;            // break "while"
+                            }
+                            break;
+                        
+                        default:
+                            printf("PANIC!!!\nUnsupported instruction: %s\n", ZydisMnemonicGetString(instruction.mnemonic));
+                            break;
                     }
                     
                     offset += instruction.length;

@@ -168,8 +168,6 @@ int main(int argc, char** argv) {
                                 int reg_idx = get_register_index(operands[0].reg.value);
                                 if (reg_idx != -1) {
                                     LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
-                                    LLVMValueRef old_tmp = LLVMBuildLoad2(builder, i64, reg_ptr, "old_tmp");
-                                    
                                     LLVMBuildStore(builder, LLVMBuildXor(builder, LLVMBuildLoad2(builder, i64, reg_ptr, "load_tmp"), 
                                                                 LLVMConstInt(i64, operands[1].imm.value.s, 0), "xor_tmp"), reg_ptr);
                                     dcpu.gprs[reg_idx] = dcpu.gprs[reg_idx] ^ operands[1].imm.value.s;
@@ -181,7 +179,7 @@ int main(int argc, char** argv) {
                                     LLVMValueRef reg_ptr1 = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
                                     LLVMValueRef reg_ptr2 = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_sidx);
                                     LLVMBuildStore(builder, LLVMBuildXor(builder, LLVMBuildLoad2(builder, i64, reg_ptr1, "load_tmp"), 
-                                                                       LLVMBuildLoad2(builder, i64, reg_ptr2, "reg_ptr2"), reg_ptr1);
+                                                                       LLVMBuildLoad2(builder, i64, reg_ptr2, "reg_ptr2"), "xor_tmp"), reg_ptr1);
                                     dcpu.gprs[reg_idx] = dcpu.gprs[reg_idx] ^ dcpu.gprs[reg_sidx];
                                 }
                             }

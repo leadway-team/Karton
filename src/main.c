@@ -189,8 +189,8 @@ int main(int argc, char** argv) {
                             LLVMValueRef args[] = { cpu_ptr };
                             LLVMBuildCall2(builder, func_type, syscall_handler, args, 1, "");
                             
-                            if (dcpu.gprs[0] == 60) { // sys_exit
-                                i = phnum;            // break "while"
+                            if (dcpu.gprs[0] == 60) {   // sys_exit
+                                offset = phdr.p_filesz; // break "while"
                             }
                             break;
                         

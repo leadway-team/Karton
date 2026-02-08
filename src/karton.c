@@ -77,3 +77,9 @@ void helper_syscall(CPUState *cpu) {
         exit(7);
     }
 }
+
+void* access_quest(uint64_t guest_addr, GElf_Phdr *phdr, uint8_t *raw_bin) {
+    uint64_t offset_in_segment = guest_addr - phdr->p_vaddr;
+    uint64_t offset_in_file = phdr->p_offset + offset_in_segment;
+    return (void*)(raw_bin + offset_in_file);
+}

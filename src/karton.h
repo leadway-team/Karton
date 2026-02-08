@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <errno.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 
 #include <json-c/json.h>
 #include <json-c/json_util.h>
@@ -29,3 +31,4 @@ extern struct json_object *jsoncalls;
 void helper_syscall(CPUState *cpu);
 int get_register_index(ZydisRegister reg);
 LLVMValueRef get_reg_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_type, int reg_idx);
+void* access_quest(uint64_t guest_addr, GElf_Phdr *phdr, uint8_t *raw_bin);

@@ -42,7 +42,21 @@ int main(int argc, char** argv) {
         return 2;
     }
     
-    Elf *e = elf_begin(fd, ELF_C_READ, NULL);
+    struct stat st;
+    int fst = fstat(fd, &st);
+    if (fst < 0) {
+        printf("fstat error, internal error code 2, fstat error code %d.\n", fst); 
+        return 2;
+    }
+    size_t file_size = st.st_size;
+    
+    uint8_t* raw_bin = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (raw_bin == MAP_FAILED) {
+        printf("mmap error, internal error code 2.\n"); 
+        return 2;
+    }
+    
+    Elf *e = elf_memory((char*)raw_bin, file_size);
     if (e == NULL) {
         printf("Libelf error, internal error code 3.\n");
         return 3;
@@ -146,10 +160,21 @@ int main(int argc, char** argv) {
                         case ZYDIS_MNEMONIC_MOV:
                             if (operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
                                 int reg_idx = get_register_index(operands[0].reg.value);
+                                uint64_t tmp = operands[1].imm.value.s;
+                                if (tmp >= phdr.p_vaddr && tmp < (phdr.p_vaddr + phdr.p_memsz)) {
+                                    tmp = (uint64_t)access_quest(tmp, &phdr, raw_bin);
+                                }
                                 if (reg_idx != -1) {
                                     LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
-                                    LLVMBuildStore(builder, LLVMConstInt(i64, operands[1].imm.value.s, 0), reg_ptr);
-                                    dcpu.gprs[reg_idx] = operands[1].imm.value.s;
+                                    LLVMBuildStore(builder, LLVMConstInt(i64, tmp, 0), reg_ptr);
+                                    dcpu.gprs[reg_idx] = tmp;
+                                }
+                            } else if (operands[1].type == ZYDIS_OPERAND_TYPE_MEMORY) { // not working?
+                                int reg_idx = get_register_index(operands[0].reg.value);
+                                if (reg_idx != -1) {
+                                    LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
+                                    dcpu.gprs[reg_idx] = (uint64_t)access_quest(operands[1].mem.disp.value, &phdr, raw_bin);
+                                    LLVMBuildStore(builder, LLVMConstInt(i64, dcpu.gprs[reg_idx], 0), reg_ptr);
                                 }
                             } else {
                                 int reg_idx  = get_register_index(operands[0].reg.value);

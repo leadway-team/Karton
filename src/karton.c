@@ -41,11 +41,15 @@ void helper_syscall(CPUState *cpu) {
         json_object_object_get_ex(entry, "argc", &argc);
         json_object_object_get_ex(entry, "args", &args);
         
+        // TODO: REMOVE THIS SHIT
+        #ifdef DEBUG
         printf("DEBUG - x86_64: %ld\n", rax);
+        #endif
         rax = json_object_get_int(native);
+        #ifdef DEBUG
         printf("      - arm64 : %ld\n", rax);
         printf("      - argc  : %d\n", json_object_get_int(argc));
-        
+        #endif
         
         int n_args = json_object_array_length(args);
         uint64_t sargs[6] = {0, 0, 0, 0, 0, 0};

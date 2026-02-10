@@ -86,8 +86,6 @@ int main(int argc, char** argv) {
         return 6;
     }
     
-    printf("First step is complete.\n");
-    
     CPUState cpu = {0};
     LLVMTypeRef i64 = LLVMInt64Type();
     LLVMTypeRef cpu_struct_type = LLVMStructCreateNamed(LLVMGetGlobalContext(), "CPUState");
@@ -105,18 +103,17 @@ int main(int argc, char** argv) {
     LLVMPositionBuilderAtEnd(builder, entry);
     
     LLVMValueRef cpu_ptr = LLVMGetParam(func, 0);
-    /*LLVMValueRef indices[] = { I dont think we actually need this
-        LLVMConstInt(LLVMInt32Type(), 0, 0),
-        LLVMConstInt(LLVMInt32Type(), 0, 0),
-        LLVMConstInt(LLVMInt32Type(), 0, 0)
-    };*/
     
     LLVMTypeRef param_types[] = { cpu_ptr_type };
     LLVMTypeRef func_type = LLVMFunctionType(LLVMVoidType(), param_types, 1, 0);
     LLVMValueRef syscall_handler = LLVMAddFunction(mod, "helper_syscall", func_type);
     
     ZyanU64 entry_point = ehdr.e_entry;
-    printf("Preparing is done 🎉\nEntry point address: %lu\n", entry_point);
+    printf("Preparing is done 🎉\n");
+    
+    #ifdef DEBUG
+    printf("Entry point address: %lu\n", entry_point);
+    #endif
     
     ZyanUSize phnum;
     elf_getphdrnum(e, &phnum);
@@ -126,7 +123,9 @@ int main(int argc, char** argv) {
         gelf_getphdr(e, i, &phdr);
         
         if (phdr.p_type == PT_LOAD && (phdr.p_flags & PF_X)) {
+            #ifdef DEBUG
             printf("EXEC SECTION №%zu ; SIZE %lu \n", i, phdr.p_memsz);
+            #endif
             
             ZyanU8 *data = malloc(phdr.p_filesz);
             lseek(fd, phdr.p_offset, SEEK_SET);
@@ -134,7 +133,9 @@ int main(int argc, char** argv) {
             
             ZyanU64 entry_offset = entry_point - phdr.p_vaddr;
             if (entry_offset < phdr.p_filesz) {
+                #ifdef DEBUG
                 printf("ENTRY OFFSET %lu\n", entry_offset);
+                #endif
                 ZydisDecoder decoder;
                 ZydisDecoderInit(&decoder, mode, width);
                 
@@ -142,7 +143,7 @@ int main(int argc, char** argv) {
                 ZydisFormatterInit(&formatter, ZYDIS_FORMATTER_STYLE_INTEL);
                 
                 ZyanUSize offset = entry_offset;
-                ZyanU64 runtime_address = entry_point;
+                ZyanU64 runtime_address = entry_point; // Only for debug (temporary?)
                 
                 ZydisDecodedInstruction instruction;
                 ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
@@ -150,11 +151,13 @@ int main(int argc, char** argv) {
                 CPUState dcpu = {0};
                 
                 while (offset < phdr.p_filesz && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, data + offset, phdr.p_filesz - offset, &instruction, operands))) {
+                    #ifdef DEBUG
                     printf("%016" PRIX64 "  ", runtime_address);
                     
                     char buffer[256];
                     ZydisFormatterFormatInstruction(&formatter, &instruction, operands, instruction.operand_count_visible, buffer, sizeof(buffer), runtime_address, ZYAN_NULL);
                     puts(buffer);
+                    #endif
                     
                     switch (instruction.mnemonic) {
                         case ZYDIS_MNEMONIC_MOV:
@@ -250,8 +253,10 @@ int main(int argc, char** argv) {
     uintptr_t func_ptr = (uintptr_t)LLVMGetFunctionAddress(engine, "start");
     void (*compiled_start)(CPUState*) = (void (*)(CPUState*))func_ptr;
     
-    printf("PREPARATIONS FOR JIT - DONE. GENERATED IR:\n");
+    #ifdef DEBUG
+    printf("---- DEBUG: PREPARATIONS FOR JIT - DONE. GENERATED IR: ----\n");
     LLVMDumpModule(mod);
+    #endif
     
     printf("Starting JIT execution...\n");
     compiled_start(&cpu);

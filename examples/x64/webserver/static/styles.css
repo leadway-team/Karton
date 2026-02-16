@@ -1,0 +1,74 @@
+@font-face {
+  font-family: 'DOS';
+  src: url('/font.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #000084;
+    background-size: 80px 40px;
+    background-position: 
+        0 0, 
+        0 20px, 
+        40px -20px, 
+        -40px 0px;
+    font-family: "DOS",monospace;
+    font-size: 21px;
+    }
+
+.container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 50px;
+    gap: 25px;
+}
+
+.inner {
+    background-color: #c0c0c0;
+    border: 2px solid #000000;
+    padding: 2px;
+    text-align: left;
+    width: 990px;
+    box-sizing: border-box;
+}
+
+.inner2 {
+    background-color: #c0c0c0;
+    border: 2px solid #000000;
+    padding: 6px;
+    text-align: left;
+    width: 982px;
+    box-sizing: border-box;
+}
+
+.box {
+    background-color: #c0c0c0;
+    padding: 5px;
+    text-align: left;
+    width: 1000px;
+    box-sizing: border-box;
+    box-shadow: 10px 10px 0px 0px #000000;
+}
+
+h1 {
+    text-align: center;
+}
+
+a.link {
+    display: inline-block;
+    background-color: #0aa;
+    color: #fefe54;
+    text-decoration: none;
+    padding: 4px 8px;
+    margin: 0 3px;
+    font-weight: bold;
+}
+
+a.link:hover {
+    background-color: #e68a00;
+    color: #fefe54;
+}

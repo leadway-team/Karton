@@ -1,6 +1,7 @@
 #include "karton.h"
 
 struct json_object *jsoncalls;
+LLVMTypeRef i64;
 
 LLVMValueRef get_reg_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_type, int reg_idx) {
     LLVMValueRef indices[] = {
@@ -86,4 +87,38 @@ void* access_quest(uint64_t guest_addr, GElf_Phdr *phdr, uint8_t *raw_bin) {
     uint64_t offset_in_segment = guest_addr - phdr->p_vaddr;
     uint64_t offset_in_file = phdr->p_offset + offset_in_segment;
     return (void*)(raw_bin + offset_in_file);
+}
+
+LLVMValueRef get_operand_value(LLVMBuilderRef builder, ZydisDecodedOperand *operand, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_struct_type, GElf_Phdr *phdr, uint8_t *raw_bin) {
+    switch (operand->type) {
+        case ZYDIS_OPERAND_TYPE_IMMEDIATE:
+            ; // Compatibility with C11
+            uint64_t tmp = operand->imm.value.s;
+            if (tmp >= phdr->p_vaddr && tmp < (phdr->p_vaddr + phdr->p_memsz)) {
+                tmp = (uint64_t)access_quest(tmp, phdr, raw_bin);
+            }
+            return LLVMConstInt(i64, tmp, 0);
+            break;
+        
+        case ZYDIS_OPERAND_TYPE_MEMORY:
+            return LLVMConstInt(i64, (uint64_t)access_quest(operand->mem.disp.value, phdr, raw_bin), 0);
+            break;
+        
+        case ZYDIS_OPERAND_TYPE_REGISTER:
+            ; // Compatibility with C11
+            int reg_idx = get_register_index(operand->reg.value);
+            LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
+            return LLVMBuildLoad2(builder, i64, reg_ptr, "reg_ptr");
+        
+        default:
+            return NULL;
+            break;
+    }
+}
+
+void set_operand_value(LLVMValueRef value, LLVMBuilderRef builder, ZydisDecodedOperand *operand, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_struct_type, CPUState *dcpu) {
+    int reg_idx = get_register_index(operand->reg.value);
+    LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
+    LLVMBuildStore(builder, value, reg_ptr);
+    dcpu->gprs[reg_idx] = LLVMConstIntGetSExtValue(value);
 }

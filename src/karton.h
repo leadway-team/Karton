@@ -27,8 +27,11 @@ typedef struct {
 } CPUState;
 
 /* see karton.c */
+extern LLVMTypeRef i64;
 extern struct json_object *jsoncalls;
 void helper_syscall(CPUState *cpu);
 int get_register_index(ZydisRegister reg);
 LLVMValueRef get_reg_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_type, int reg_idx);
 void* access_quest(uint64_t guest_addr, GElf_Phdr *phdr, uint8_t *raw_bin);
+LLVMValueRef get_operand_value(LLVMBuilderRef builder, ZydisDecodedOperand *operands, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_struct_type, GElf_Phdr *phdr, uint8_t *raw_bin);
+void set_operand_value(LLVMValueRef value, LLVMBuilderRef builder, ZydisDecodedOperand *operands, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_struct_type, CPUState *dcpu);

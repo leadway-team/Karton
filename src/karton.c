@@ -1,15 +1,22 @@
 #include "karton.h"
 
 struct json_object *jsoncalls;
+struct json_object *jsonints;
 LLVMTypeRef i64;
 
 LLVMValueRef get_reg_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_type, int reg_idx) {
-    LLVMValueRef indices[] = {
-        LLVMConstInt(LLVMInt32Type(), 0, 0),
-        LLVMConstInt(LLVMInt32Type(), 0, 0),
-        LLVMConstInt(LLVMInt32Type(), reg_idx, 0)
-    };
-    return LLVMBuildInBoundsGEP2(builder, cpu_type, cpu_ptr, indices, 3, "reg_ptr");
+    int num = 3; LLVMValueRef indices[3];
+    if (reg_idx == 16) {
+        indices[0] = LLVMConstInt(LLVMInt64Type(), 0, 0);
+        indices[1] = LLVMConstInt(LLVMInt64Type(), 1, 0);
+        num = 2;
+    } else {
+        indices[0] = LLVMConstInt(LLVMInt64Type(), 0, 0);
+        indices[1] = LLVMConstInt(LLVMInt64Type(), 0, 0);
+        indices[2] = LLVMConstInt(LLVMInt64Type(), reg_idx, 0);
+    }
+    
+    return LLVMBuildInBoundsGEP2(builder, cpu_type, cpu_ptr, indices, num, "reg_ptr");
 }
 
 int get_register_index(ZydisRegister reg) {
@@ -20,14 +27,22 @@ int get_register_index(ZydisRegister reg) {
         return 8 + (reg - ZYDIS_REGISTER_R8);
     }
     
+    if (reg >= ZYDIS_REGISTER_EAX && reg <= ZYDIS_REGISTER_EDI) {
+        return reg - ZYDIS_REGISTER_EAX;
+    }
+    
+    if (reg == ZYDIS_REGISTER_EIP || reg == ZYDIS_REGISTER_RIP) {
+        return 16;
+    }
+    
     return -1; 
 }
 
 void helper_syscall(CPUState *cpu) {
     uint64_t rax = cpu->gprs[0];
-    uint64_t rdx = cpu->gprs[2];
-    uint64_t rsi = cpu->gprs[6];
     uint64_t rdi = cpu->gprs[7];
+    uint64_t rsi = cpu->gprs[6];
+    uint64_t rdx = cpu->gprs[2];
     uint64_t r8  = cpu->gprs[8];
     uint64_t r9  = cpu->gprs[9];
     uint64_t r10 = cpu->gprs[10];
@@ -83,6 +98,66 @@ void helper_syscall(CPUState *cpu) {
     }
 }
 
+void helper_int80(CPUState *cpu) {
+    uint64_t eax = cpu->gprs[0];
+    uint64_t ebx = cpu->gprs[3];
+    uint64_t ecx = cpu->gprs[1];
+    uint64_t edx = cpu->gprs[2];
+    uint64_t esi  = cpu->gprs[6];
+    uint64_t edi  = cpu->gprs[7];
+    uint64_t ebp = cpu->gprs[5];
+    
+    char eax_char[4];
+    snprintf(eax_char, sizeof(eax_char), "%" PRIu64, eax);
+    struct json_object *entry;
+    if (json_object_object_get_ex(jsonints, eax_char, &entry)) {
+        struct json_object *native, *argc, *args;
+        
+        json_object_object_get_ex(entry, "native", &native);
+        json_object_object_get_ex(entry, "argc", &argc);
+        json_object_object_get_ex(entry, "args", &args);
+        
+        // TODO: REMOVE THIS SHIT
+        #ifdef DEBUG
+        printf("DEBUG - x86   : %ld\n", eax);
+        #endif
+        eax = json_object_get_int(native);
+        #ifdef DEBUG
+        printf("      - arm64 : %ld\n", eax);
+        printf("      - argc  : %d\n", json_object_get_int(argc));
+        #endif
+        
+        int n_args = json_object_array_length(args);
+        uint64_t sargs[6] = {0, 0, 0, 0, 0, 0};
+        for (int i = 0; i < n_args; i++) {
+            struct json_object *arg = json_object_array_get_idx(args, i);
+            const char* string_arg = json_object_get_string(arg);
+                   if (strcmp("ebx", string_arg) == 0) {
+                sargs[i] = ebx;
+            } else if (strcmp("ecx", string_arg) == 0) {
+                sargs[i] = ecx;
+            } else if (strcmp("edx", string_arg) == 0) {
+                sargs[i] = edx;
+            } else if (strcmp("esi", string_arg) == 0) {
+                sargs[i] = esi;
+            } else if (strcmp("edi", string_arg) == 0) {
+                sargs[i] = edi;
+            } else if (strcmp("ebp", string_arg) == 0) {
+                sargs[i] = ebp;
+            } else {
+                char *endptr;
+                sargs[i] = (uint64_t)strtoull(string_arg, &endptr, 10);
+            }
+        }
+        
+        syscall(eax, sargs[0], sargs[1], sargs[2], sargs[3], sargs[4], sargs[5]);
+    } else {
+        printf("JSON file doesn't contain required (32-bit) syscall!\n");
+        printf("Internal error code 7\n");
+        exit(7);
+    }
+}
+
 void* access_quest(uint64_t guest_addr, GElf_Phdr *phdr, uint8_t *raw_bin) {
     uint64_t offset_in_segment = guest_addr - phdr->p_vaddr;
     uint64_t offset_in_file = phdr->p_offset + offset_in_segment;
@@ -91,28 +166,30 @@ void* access_quest(uint64_t guest_addr, GElf_Phdr *phdr, uint8_t *raw_bin) {
 
 LLVMValueRef get_operand_value(LLVMBuilderRef builder, ZydisDecodedOperand *operand, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_struct_type, GElf_Phdr *phdr, uint8_t *raw_bin) {
     switch (operand->type) {
-        case ZYDIS_OPERAND_TYPE_IMMEDIATE:
-            ; // Compatibility with C11
+        case ZYDIS_OPERAND_TYPE_IMMEDIATE: {
             uint64_t tmp = operand->imm.value.s;
             if (tmp >= phdr->p_vaddr && tmp < (phdr->p_vaddr + phdr->p_memsz)) {
                 tmp = (uint64_t)access_quest(tmp, phdr, raw_bin);
             }
             return LLVMConstInt(i64, tmp, 0);
             break;
+        }
         
-        case ZYDIS_OPERAND_TYPE_MEMORY:
+        case ZYDIS_OPERAND_TYPE_MEMORY: {
             return LLVMConstInt(i64, (uint64_t)access_quest(operand->mem.disp.value, phdr, raw_bin), 0);
             break;
+        }
         
-        case ZYDIS_OPERAND_TYPE_REGISTER:
-            ; // Compatibility with C11
+        case ZYDIS_OPERAND_TYPE_REGISTER: {
             int reg_idx = get_register_index(operand->reg.value);
             LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
             return LLVMBuildLoad2(builder, i64, reg_ptr, "reg_ptr");
+        }
         
-        default:
+        default: {
             return NULL;
             break;
+        }
     }
 }
 
@@ -120,5 +197,8 @@ void set_operand_value(LLVMValueRef value, LLVMBuilderRef builder, ZydisDecodedO
     int reg_idx = get_register_index(operand->reg.value);
     LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
     LLVMBuildStore(builder, value, reg_ptr);
-    dcpu->gprs[reg_idx] = LLVMConstIntGetSExtValue(value);
+    
+    if (reg_idx < 16) {
+        dcpu->gprs[reg_idx] = LLVMConstIntGetSExtValue(value);
+    }
 }

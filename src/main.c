@@ -31,6 +31,27 @@ int main(int argc, char** argv) {
         return -1;
     }
     
+    fp = fopen("ints80.json", "rb");
+    if (fp == NULL) {
+        printf("Open file error, internal error code 2, \"fopen\" error code: %s.\n", strerror(errno));
+        return 2;
+    }
+    
+    fseek(fp, 0, SEEK_END);
+    fsize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    
+    data = malloc(fsize + 1);
+    fread(data, 1, fsize, fp);
+    fclose(fp);
+    data[fsize] = 0;
+    
+    jsonints = json_tokener_parse_verbose(data, &jerr);
+    if (!jsonints) {
+        printf("json-c error, internal error code -1, json-c error code %s.\n", json_util_get_last_err());
+        return -1;
+    }
+    
     if (elf_version(EV_CURRENT) == EV_NONE) {
         printf("Libelf error, internal error code 1.\n");
         return 1;
@@ -108,6 +129,7 @@ int main(int argc, char** argv) {
     LLVMTypeRef param_types[] = { cpu_ptr_type };
     LLVMTypeRef func_type = LLVMFunctionType(LLVMVoidType(), param_types, 1, 0);
     LLVMValueRef syscall_handler = LLVMAddFunction(mod, "helper_syscall", func_type);
+    LLVMValueRef int80_handler = LLVMAddFunction(mod, "helper_int80", func_type);
     
     ZyanU64 entry_point = ehdr.e_entry;
     printf("Preparing is done 🎉\n");
@@ -150,6 +172,7 @@ int main(int argc, char** argv) {
                 ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
                 
                 CPUState dcpu = {0};
+                dcpu.rip = entry_point;
                 
                 while (offset < phdr.p_filesz && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, data + offset, phdr.p_filesz - offset, &instruction, operands))) {
                     #ifdef DEBUG
@@ -164,13 +187,11 @@ int main(int argc, char** argv) {
                     
                     switch (instruction.mnemonic) {
                         case ZYDIS_MNEMONIC_MOV: {
-                            ; // Compatibility with C11
                             set_operand_value(value, builder, &operands[0], cpu_ptr, cpu_struct_type, &dcpu);
                             break;
                         }
                         
                         case ZYDIS_MNEMONIC_XOR: {
-                            ; // Compatibility with C11
                             int reg_idx = get_register_index(operands[0].reg.value);
                             LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
                             set_operand_value(LLVMBuildXor(builder, LLVMBuildLoad2(builder, i64, reg_ptr, "load_tmp"), 
@@ -179,7 +200,6 @@ int main(int argc, char** argv) {
                         }
                         
                         case ZYDIS_MNEMONIC_ADD: {
-                            ; // Compatibility with C11
                             int reg_idx = get_register_index(operands[0].reg.value);
                             LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
                             set_operand_value(LLVMBuildAdd(builder, LLVMBuildLoad2(builder, i64, reg_ptr, "load_tmp"), 
@@ -188,7 +208,6 @@ int main(int argc, char** argv) {
                         }
                         
                         case ZYDIS_MNEMONIC_SUB: {
-                            ; // Compatibility with C11
                             int reg_idx = get_register_index(operands[0].reg.value);
                             LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
                             set_operand_value(LLVMBuildSub(builder, LLVMBuildLoad2(builder, i64, reg_ptr, "load_tmp"), 
@@ -197,7 +216,6 @@ int main(int argc, char** argv) {
                         }
                         
                         case ZYDIS_MNEMONIC_SYSCALL: {
-                            ; // Compatibility with C11
                             LLVMValueRef args[] = { cpu_ptr };
                             LLVMBuildCall2(builder, func_type, syscall_handler, args, 1, "");
                             
@@ -205,6 +223,18 @@ int main(int argc, char** argv) {
                                 offset = phdr.p_filesz; // break "while"
                             }
                             break;
+                        }
+                        
+                        case ZYDIS_MNEMONIC_INT: {
+                            if (operands[0].imm.value.u == 0x80) {
+                                LLVMValueRef args[] = { cpu_ptr };
+                                LLVMBuildCall2(builder, func_type, int80_handler, args, 1, "");
+                                
+                                if (dcpu.gprs[0] == 1) {   // sys_exit
+                                    offset = phdr.p_filesz; // break "while"
+                                }
+                                break;
+                            }
                         }
                         
                         default: {
@@ -235,6 +265,7 @@ int main(int argc, char** argv) {
         return 6;
     }
     LLVMAddGlobalMapping(engine, syscall_handler, &helper_syscall);
+    LLVMAddGlobalMapping(engine, int80_handler, &helper_int80);
     
     uintptr_t func_ptr = (uintptr_t)LLVMGetFunctionAddress(engine, "start");
     void (*compiled_start)(CPUState*) = (void (*)(CPUState*))func_ptr;

@@ -22,14 +22,16 @@
 #include <llvm-c/ExecutionEngine.h>
 
 typedef struct {
-    uint64_t gprs[16]; // rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8-r15
+    uint64_t gprs[16]; // rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8-r15 | eax, ecx, ..etc
     uint64_t rip;
 } CPUState;
 
 /* see karton.c */
 extern LLVMTypeRef i64;
 extern struct json_object *jsoncalls;
+extern struct json_object *jsonints;
 void helper_syscall(CPUState *cpu);
+void helper_int80(CPUState *cpu);
 int get_register_index(ZydisRegister reg);
 LLVMValueRef get_reg_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_type, int reg_idx);
 void* access_quest(uint64_t guest_addr, GElf_Phdr *phdr, uint8_t *raw_bin);

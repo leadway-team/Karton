@@ -1,5 +1,7 @@
 #include "karton.h"
 
+LLVMTypeRef i64;
+
 int main(int argc, char** argv) {
     printf("Karton Emu ; 02.2026\n");
     errno = 0;
@@ -233,8 +235,8 @@ int main(int argc, char** argv) {
                                 if (dcpu.gprs[0] == 1) {   // sys_exit
                                     offset = phdr.p_filesz; // break "while"
                                 }
-                                break;
                             }
+                            break;
                         }
                         
                         default: {
@@ -253,33 +255,75 @@ int main(int argc, char** argv) {
     }
     
     LLVMBuildRetVoid(builder);
-    LLVMLinkInMCJIT();
     LLVMInitializeNativeTarget();
     LLVMInitializeNativeAsmPrinter();
     
-    LLVMExecutionEngineRef engine;
+    LLVMOrcLLJITRef JIT;
+    LLVMErrorRef Err;
     
-    char *error = NULL;
-    if (LLVMCreateExecutionEngineForModule(&engine, mod, &error) != 0) {
-        printf("Execution engine error, internal error code 6, engine error code %s.\n", error);
+    LLVMOrcLLJITBuilderRef JITBuilder = LLVMOrcCreateLLJITBuilder();
+    Err = LLVMOrcCreateLLJIT(&JIT, JITBuilder);
+    
+    if (Err) {
+        printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
         return 6;
     }
-    LLVMAddGlobalMapping(engine, syscall_handler, &helper_syscall);
-    LLVMAddGlobalMapping(engine, int80_handler, &helper_int80);
     
-    uintptr_t func_ptr = (uintptr_t)LLVMGetFunctionAddress(engine, "start");
+    LLVMOrcJITDylibRef MainJD = LLVMOrcLLJITGetMainJITDylib(JIT);
+    
+    LLVMOrcSymbolStringPoolEntryRef S_syscall = LLVMOrcLLJITMangleAndIntern(JIT, "helper_syscall");
+    LLVMOrcSymbolStringPoolEntryRef S_int80 = LLVMOrcLLJITMangleAndIntern(JIT, "helper_int80");
+    LLVMJITSymbolFlags Flags = { LLVMJITSymbolGenericFlagsExported, 0 };
+    LLVMOrcRetainSymbolStringPoolEntry(S_syscall);
+    LLVMOrcRetainSymbolStringPoolEntry(S_int80);
+    
+    LLVMOrcCSymbolMapPair Symbols[] = {
+        { S_syscall, { (LLVMOrcExecutorAddress)&helper_syscall, Flags } },
+        { S_int80,   { (LLVMOrcExecutorAddress)&helper_int80, Flags } }
+    };
+    
+    LLVMOrcMaterializationUnitRef MU = LLVMOrcAbsoluteSymbols(Symbols, 2);
+    Err = LLVMOrcJITDylibDefine(MainJD, MU);
+    if (Err) {
+        printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
+        return 6;
+    }
+    
+    #ifdef DEBUG
+    printf("---- DEBUG: GENERATED IR: ----\n");
+    LLVMDumpModule(mod);
+    #endif
+    
+    LLVMOrcThreadSafeContextRef TSCtx = LLVMOrcCreateNewThreadSafeContext();
+    LLVMOrcThreadSafeModuleRef TSM = LLVMOrcCreateNewThreadSafeModule(mod, TSCtx);
+    
+    Err = LLVMOrcLLJITAddLLVMIRModule(JIT, MainJD, TSM);
+    if (Err) {
+        printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
+        return 6;
+    }
+    
+    LLVMOrcExecutorAddress func_ptr;
+    Err = LLVMOrcLLJITLookup(JIT, &func_ptr, "start");
+    if (Err) {
+        printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
+        return 6;
+    }
+    
     void (*compiled_start)(CPUState*) = (void (*)(CPUState*))func_ptr;
     
     #ifdef DEBUG
-    printf("---- DEBUG: PREPARATIONS FOR JIT - DONE. GENERATED IR: ----\n");
-    LLVMDumpModule(mod);
+    printf("---- DEBUG: PREPARATIONS FOR JIT - DONE. ----\n");
     #endif
     
     printf("Starting JIT execution...\n");
     compiled_start(&cpu);
         
+    LLVMOrcReleaseSymbolStringPoolEntry(S_syscall);
+    LLVMOrcReleaseSymbolStringPoolEntry(S_int80);
     LLVMDisposeBuilder(builder);
-    LLVMDisposeExecutionEngine(engine);
+    LLVMOrcDisposeLLJIT(JIT);
+    LLVMOrcDisposeThreadSafeContext(TSCtx);
     elf_end(e);
     close(fd);
     return 0;

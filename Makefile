@@ -18,7 +18,7 @@ ifeq ($(DEBUG), 2)
 	CFLAGS += -fsanitize=address -fno-omit-frame-pointer
 endif
 
-SOURCES = src/main.c src/karton.c src/vec.c
+SOURCES = src/main.c src/gen.c src/exec.c src/vec.c
 
 all: build
 

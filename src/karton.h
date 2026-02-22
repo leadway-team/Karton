@@ -20,6 +20,8 @@
 
 #include <llvm-c/Core.h>
 #include <llvm-c/ExecutionEngine.h>
+#include <llvm-c/Orc.h>
+#include <llvm-c/LLJIT.h>
 
 typedef struct {
     uint64_t gprs[16]; // rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8-r15 | eax, ecx, ..etc

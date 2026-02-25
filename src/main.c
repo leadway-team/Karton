@@ -1,6 +1,8 @@
 #include "karton.h"
 
 LLVMTypeRef i64;
+GElf_Phdr* phdrs;
+CPUState cpu = {0};
 
 int main(int argc, char** argv) {
     printf("Karton Emu ; 02.2026\n");
@@ -21,13 +23,13 @@ int main(int argc, char** argv) {
     long fsize = ftell(fp);
     fseek(fp, 0, SEEK_SET);
     
-    char *data = malloc(fsize + 1);
-    fread(data, 1, fsize, fp);
+    char* jdata = malloc(fsize + 1);
+    fread(jdata, 1, fsize, fp);
     fclose(fp);
-    data[fsize] = 0;
+    jdata[fsize] = 0;
     
     enum json_tokener_error jerr;
-    jsoncalls = json_tokener_parse_verbose(data, &jerr);
+    jsoncalls = json_tokener_parse_verbose(jdata, &jerr);
     if (!jsoncalls) {
         printf("json-c error, internal error code -1, json-c error code %s.\n", json_util_get_last_err());
         return -1;
@@ -43,12 +45,12 @@ int main(int argc, char** argv) {
     fsize = ftell(fp);
     fseek(fp, 0, SEEK_SET);
     
-    data = malloc(fsize + 1);
-    fread(data, 1, fsize, fp);
+    jdata = malloc(fsize + 1);
+    fread(jdata, 1, fsize, fp);
     fclose(fp);
-    data[fsize] = 0;
+    jdata[fsize] = 0;
     
-    jsonints = json_tokener_parse_verbose(data, &jerr);
+    jsonints = json_tokener_parse_verbose(jdata, &jerr);
     if (!jsonints) {
         printf("json-c error, internal error code -1, json-c error code %s.\n", json_util_get_last_err());
         return -1;
@@ -109,170 +111,39 @@ int main(int argc, char** argv) {
         return 6;
     }
     
-    CPUState cpu = {0};
-    LLVMTypeRef cpu_struct_type = LLVMStructCreateNamed(LLVMGetGlobalContext(), "CPUState");
+    JITCtx jcontext;
+    jcontext.mod = LLVMModuleCreateWithName("karton_module");
+    
+    jcontext.cpu_struct_type = LLVMStructCreateNamed(LLVMGetGlobalContext(), "CPUState");
     
     i64 = LLVMInt64Type();
     
     LLVMTypeRef array_type = LLVMArrayType(i64, 16);
     LLVMTypeRef fields[] = { array_type, i64 };
-    LLVMStructSetBody(cpu_struct_type, fields, 2, 0);
-    LLVMTypeRef cpu_ptr_type = LLVMPointerType(cpu_struct_type, 0);
+    LLVMStructSetBody(jcontext.cpu_struct_type, fields, 2, 0);
+    jcontext.cpu_ptr_type = LLVMPointerType(jcontext.cpu_struct_type, 0);
     
-    LLVMModuleRef mod = LLVMModuleCreateWithName("karton_module");
-    LLVMTypeRef ret_type = LLVMFunctionType(LLVMVoidType(), &cpu_ptr_type, 1, 0);
-    LLVMValueRef func = LLVMAddFunction(mod, "start", ret_type);
-    LLVMBasicBlockRef entry = LLVMAppendBasicBlock(func, "entry");
-    LLVMBuilderRef builder = LLVMCreateBuilder();
-    LLVMPositionBuilderAtEnd(builder, entry);
+    LLVMTypeRef param_types[] = { jcontext.cpu_ptr_type };
+    jcontext.func_type = LLVMFunctionType(LLVMVoidType(), param_types, 1, 0);
+    jcontext.syscall_handler = LLVMAddFunction(jcontext.mod, "helper_syscall", jcontext.func_type);
+    jcontext.int80_handler = LLVMAddFunction(jcontext.mod, "helper_int80", jcontext.func_type);
     
-    LLVMValueRef cpu_ptr = LLVMGetParam(func, 0);
-    
-    LLVMTypeRef param_types[] = { cpu_ptr_type };
-    LLVMTypeRef func_type = LLVMFunctionType(LLVMVoidType(), param_types, 1, 0);
-    LLVMValueRef syscall_handler = LLVMAddFunction(mod, "helper_syscall", func_type);
-    LLVMValueRef int80_handler = LLVMAddFunction(mod, "helper_int80", func_type);
-    
-    ZyanU64 entry_point = ehdr.e_entry;
-    printf("Preparing is done 🎉\n");
-    
-    #ifdef DEBUG
-    printf("Entry point address: %lu\n", entry_point);
-    #endif
-    
-    ZyanUSize phnum;
-    elf_getphdrnum(e, &phnum);
-    GElf_Phdr phdr;
-    
-    for (ZyanUSize i = 0; i < phnum; i++) {
-        gelf_getphdr(e, i, &phdr);
-        
-        if (phdr.p_type == PT_LOAD && (phdr.p_flags & PF_X)) {
-            #ifdef DEBUG
-            printf("EXEC SECTION №%zu ; SIZE %lu \n", i, phdr.p_memsz);
-            #endif
-            
-            ZyanU8 *data = malloc(phdr.p_filesz);
-            lseek(fd, phdr.p_offset, SEEK_SET);
-            read(fd, data, phdr.p_filesz);
-            
-            ZyanU64 entry_offset = entry_point - phdr.p_vaddr;
-            if (entry_offset < phdr.p_filesz) {
-                #ifdef DEBUG
-                printf("ENTRY OFFSET %lu\n", entry_offset);
-                #endif
-                ZydisDecoder decoder;
-                ZydisDecoderInit(&decoder, mode, width);
-                
-                ZydisFormatter formatter;
-                ZydisFormatterInit(&formatter, ZYDIS_FORMATTER_STYLE_INTEL);
-                
-                ZyanUSize offset = entry_offset;
-                ZyanU64 runtime_address = entry_point; // Only for debug (temporary?)
-                
-                ZydisDecodedInstruction instruction;
-                ZydisDecodedOperand operands[ZYDIS_MAX_OPERAND_COUNT];
-                
-                CPUState dcpu = {0};
-                dcpu.rip = entry_point;
-                
-                while (offset < phdr.p_filesz && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&decoder, data + offset, phdr.p_filesz - offset, &instruction, operands))) {
-                    #ifdef DEBUG
-                    printf("%016" PRIX64 "  ", runtime_address);
-                    
-                    char buffer[256];
-                    ZydisFormatterFormatInstruction(&formatter, &instruction, operands, instruction.operand_count_visible, buffer, sizeof(buffer), runtime_address, ZYAN_NULL);
-                    puts(buffer);
-                    #endif
-                    
-                    LLVMValueRef value = get_operand_value(builder, &operands[1], cpu_ptr, cpu_struct_type, &phdr, raw_bin);
-                    
-                    switch (instruction.mnemonic) {
-                        case ZYDIS_MNEMONIC_MOV: {
-                            set_operand_value(value, builder, &operands[0], cpu_ptr, cpu_struct_type, &dcpu);
-                            break;
-                        }
-                        
-                        case ZYDIS_MNEMONIC_XOR: {
-                            int reg_idx = get_register_index(operands[0].reg.value);
-                            LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
-                            set_operand_value(LLVMBuildXor(builder, LLVMBuildLoad2(builder, i64, reg_ptr, "load_tmp"), 
-                                                                value, "xor_tmp"), builder, &operands[0], cpu_ptr, cpu_struct_type, &dcpu);
-                            break;
-                        }
-                        
-                        case ZYDIS_MNEMONIC_ADD: {
-                            int reg_idx = get_register_index(operands[0].reg.value);
-                            LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
-                            set_operand_value(LLVMBuildAdd(builder, LLVMBuildLoad2(builder, i64, reg_ptr, "load_tmp"), 
-                                                                value, "add_tmp"), builder, &operands[0], cpu_ptr, cpu_struct_type, &dcpu);
-                            break;
-                        }
-                        
-                        case ZYDIS_MNEMONIC_SUB: {
-                            int reg_idx = get_register_index(operands[0].reg.value);
-                            LLVMValueRef reg_ptr = get_reg_ptr(builder, cpu_ptr, cpu_struct_type, reg_idx);
-                            set_operand_value(LLVMBuildSub(builder, LLVMBuildLoad2(builder, i64, reg_ptr, "load_tmp"), 
-                                                                value, "sub_tmp"), builder, &operands[0], cpu_ptr, cpu_struct_type, &dcpu);
-                            break;
-                        }
-                        
-                        case ZYDIS_MNEMONIC_SYSCALL: {
-                            LLVMValueRef args[] = { cpu_ptr };
-                            LLVMBuildCall2(builder, func_type, syscall_handler, args, 1, "");
-                            
-                            if (dcpu.gprs[0] == 60) {   // sys_exit
-                                offset = phdr.p_filesz; // break "while"
-                            }
-                            break;
-                        }
-                        
-                        case ZYDIS_MNEMONIC_INT: {
-                            if (operands[0].imm.value.u == 0x80) {
-                                LLVMValueRef args[] = { cpu_ptr };
-                                LLVMBuildCall2(builder, func_type, int80_handler, args, 1, "");
-                                
-                                if (dcpu.gprs[0] == 1) {   // sys_exit
-                                    offset = phdr.p_filesz; // break "while"
-                                }
-                            }
-                            break;
-                        }
-                        
-                        default: {
-                            printf("PANIC!!!\nUnsupported instruction: %s\n", ZydisMnemonicGetString(instruction.mnemonic));
-                            break;
-                        }
-                    }
-                    
-                    offset += instruction.length;
-                    runtime_address += instruction.length;
-                }
-            }
-            
-            free(data);
-        }
-    }
-    
-    LLVMBuildRetVoid(builder);
     LLVMInitializeNativeTarget();
     LLVMInitializeNativeAsmPrinter();
-    
-    LLVMOrcLLJITRef JIT;
     LLVMErrorRef Err;
     
     LLVMOrcLLJITBuilderRef JITBuilder = LLVMOrcCreateLLJITBuilder();
-    Err = LLVMOrcCreateLLJIT(&JIT, JITBuilder);
+    Err = LLVMOrcCreateLLJIT(&jcontext.JIT, JITBuilder);
     
     if (Err) {
         printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
         return 6;
     }
     
-    LLVMOrcJITDylibRef MainJD = LLVMOrcLLJITGetMainJITDylib(JIT);
+    jcontext.MainJD = LLVMOrcLLJITGetMainJITDylib(jcontext.JIT);
     
-    LLVMOrcSymbolStringPoolEntryRef S_syscall = LLVMOrcLLJITMangleAndIntern(JIT, "helper_syscall");
-    LLVMOrcSymbolStringPoolEntryRef S_int80 = LLVMOrcLLJITMangleAndIntern(JIT, "helper_int80");
+    LLVMOrcSymbolStringPoolEntryRef S_syscall = LLVMOrcLLJITMangleAndIntern(jcontext.JIT, "helper_syscall");
+    LLVMOrcSymbolStringPoolEntryRef S_int80 = LLVMOrcLLJITMangleAndIntern(jcontext.JIT, "helper_int80");
     LLVMJITSymbolFlags Flags = { LLVMJITSymbolGenericFlagsExported, 0 };
     LLVMOrcRetainSymbolStringPoolEntry(S_syscall);
     LLVMOrcRetainSymbolStringPoolEntry(S_int80);
@@ -283,47 +154,53 @@ int main(int argc, char** argv) {
     };
     
     LLVMOrcMaterializationUnitRef MU = LLVMOrcAbsoluteSymbols(Symbols, 2);
-    Err = LLVMOrcJITDylibDefine(MainJD, MU);
+    Err = LLVMOrcJITDylibDefine(jcontext.MainJD, MU);
     if (Err) {
         printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
         return 6;
     }
+    
+    ZyanU64 entry_point = ehdr.e_entry;
+    printf("Preparing is done 🎉\n");
     
     #ifdef DEBUG
-    printf("---- DEBUG: GENERATED IR: ----\n");
-    LLVMDumpModule(mod);
+    printf("Entry point address: %lu\n", entry_point);
     #endif
     
-    LLVMOrcThreadSafeContextRef TSCtx = LLVMOrcCreateNewThreadSafeContext();
-    LLVMOrcThreadSafeModuleRef TSM = LLVMOrcCreateNewThreadSafeModule(mod, TSCtx);
+    phdrs = vector_create();
     
-    Err = LLVMOrcLLJITAddLLVMIRModule(JIT, MainJD, TSM);
-    if (Err) {
-        printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
-        return 6;
+    ZyanUSize phnum;
+    elf_getphdrnum(e, &phnum);
+    
+    ZydisCtx zcontext;
+    ZydisDecoderInit(&zcontext.decoder, mode, width);
+    ZydisFormatterInit(&zcontext.formatter, ZYDIS_FORMATTER_STYLE_INTEL);
+    
+    CPUState dcpu = {0};
+    dcpu.rip = entry_point;
+    
+    for (ZyanUSize i = 0; i < phnum; i++) {
+        GElf_Phdr phdr;
+        gelf_getphdr(e, i, &phdr);
+        vector_add(&phdrs, phdr);
     }
     
-    LLVMOrcExecutorAddress func_ptr;
-    Err = LLVMOrcLLJITLookup(JIT, &func_ptr, "start");
-    if (Err) {
-        printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
-        return 6;
+    ZyanU8** data = vector_create();
+    vector_add(&data, access_quest(entry_point, 
+        find_phdr(phnum, entry_point), raw_bin));
+    
+    GElf_Phdr phdr = *find_phdr(phnum, entry_point);
+    
+    while (vector_size(data)) {
+        init_llir(&jcontext);
+        gen_ir(&data, &phdr, phnum, raw_bin, &dcpu, &zcontext, &jcontext);
+        run_ir(&jcontext);
     }
     
-    void (*compiled_start)(CPUState*) = (void (*)(CPUState*))func_ptr;
-    
-    #ifdef DEBUG
-    printf("---- DEBUG: PREPARATIONS FOR JIT - DONE. ----\n");
-    #endif
-    
-    printf("Starting JIT execution...\n");
-    compiled_start(&cpu);
-        
+    vector_free(&phdrs);
+    LLVMOrcDisposeLLJIT(jcontext.JIT);
     LLVMOrcReleaseSymbolStringPoolEntry(S_syscall);
     LLVMOrcReleaseSymbolStringPoolEntry(S_int80);
-    LLVMDisposeBuilder(builder);
-    LLVMOrcDisposeLLJIT(JIT);
-    LLVMOrcDisposeThreadSafeContext(TSCtx);
     elf_end(e);
     close(fd);
     return 0;

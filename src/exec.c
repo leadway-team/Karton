@@ -122,3 +122,65 @@ void helper_int80(CPUState *cpu) {
         exit(7);
     }
 }
+
+int num = 0;
+
+void init_llir(JITCtx *jcontext) {
+    jcontext->mod = LLVMModuleCreateWithName("karton_module");
+    LLVMTypeRef ret_type = LLVMFunctionType(LLVMVoidType(), &jcontext->cpu_ptr_type, 1, 0);
+    
+    char func_name[8];
+    snprintf(func_name, sizeof(func_name), "block_%d", num);
+    
+    LLVMValueRef func = LLVMAddFunction(jcontext->mod, func_name, ret_type);
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlock(func, "entry");
+    
+    jcontext->builder = LLVMCreateBuilder();
+    LLVMPositionBuilderAtEnd(jcontext->builder, entry);
+    jcontext->cpu_ptr = LLVMGetParam(func, 0);
+}
+
+void run_ir(JITCtx *jcontext) {
+    LLVMBuildRetVoid(jcontext->builder);
+    LLVMDisposeBuilder(jcontext->builder);
+    
+    #ifdef DEBUG
+    printf("---- DEBUG: GENERATED IR: ----\n");
+    LLVMDumpModule(jcontext->mod);
+    #endif
+    
+    LLVMErrorRef Err;
+    
+    LLVMOrcThreadSafeContextRef TSCtx = LLVMOrcCreateNewThreadSafeContext();
+    LLVMOrcThreadSafeModuleRef TSM = LLVMOrcCreateNewThreadSafeModule(jcontext->mod, TSCtx);
+    
+    Err = LLVMOrcLLJITAddLLVMIRModule(jcontext->JIT, jcontext->MainJD, TSM);
+    if (Err) {
+        printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
+        exit(6);
+    }
+    
+    char func_name[8];
+    snprintf(func_name, sizeof(func_name), "block_%d", num);
+    
+    LLVMOrcExecutorAddress func_ptr;
+    Err = LLVMOrcLLJITLookup(jcontext->JIT, &func_ptr, func_name);
+    if (Err) {
+        printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
+        exit(6);
+    }
+    
+    void (*compiled_start)(CPUState*) = (void (*)(CPUState*))func_ptr;
+    
+    #ifdef DEBUG
+    printf("---- DEBUG: PREPARATIONS FOR JIT - DONE. ----\n");
+    #endif
+    
+    printf("Starting JIT execution (block %d)...\n", num);
+    compiled_start(&cpu);
+    
+    LLVMOrcDisposeThreadSafeContext(TSCtx);
+    jcontext->mod = NULL;
+    
+    num++;
+}

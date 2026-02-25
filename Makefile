@@ -1,6 +1,6 @@
 ARCH := $(shell uname -m)
 CC := clang
-CFLAGS := -Wall -Wextra -std=c11
+CFLAGS := -Wall -Wextra -std=gnu11
 LD := lld
 LDFLAGS := -fuse-ld=$(LD) -lZydis -lelf -lLLVM -ljson-c
 DEBUG ?= 0

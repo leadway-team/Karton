@@ -1,5 +1,14 @@
 #include "karton.h"
 
+GElf_Phdr* find_phdr(ZyanUSize phnum, uint64_t addr) {
+    for (ZyanUSize i = 0; i < phnum; i++) {
+        if (phdrs[i].p_type == PT_LOAD && addr >= phdrs[i].p_vaddr && addr < (phdrs[i].p_vaddr + phdrs[i].p_memsz)) {
+            return &phdrs[i];
+        }
+    }
+    return ZYAN_NULL;
+}
+
 void* access_quest(uint64_t guest_addr, GElf_Phdr *phdr, uint8_t *raw_bin) {
     uint64_t offset_in_segment = guest_addr - phdr->p_vaddr;
     uint64_t offset_in_file = phdr->p_offset + offset_in_segment;
@@ -76,5 +85,111 @@ void set_operand_value(LLVMValueRef value, LLVMBuilderRef builder, ZydisDecodedO
     
     if (reg_idx < 16) {
         dcpu->gprs[reg_idx] = LLVMConstIntGetSExtValue(value);
+    }
+}
+
+void gen_ir(ZyanU8*** data, GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, CPUState *dcpu, ZydisCtx *zcontext, JITCtx *jcontext) {
+    ZyanUSize offset = 0;
+    ZyanU64 runtime_address = dcpu->rip;
+    
+    while (offset < phdr->p_filesz && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&zcontext->decoder, *data[0] + offset, phdr->p_filesz - offset, &zcontext->instruction, zcontext->operands))) {
+        #ifdef DEBUG
+        printf("%016" PRIX64 "  ", runtime_address);
+        
+        char buffer[256];
+        ZydisFormatterFormatInstruction(&zcontext->formatter, &zcontext->instruction, zcontext->operands, zcontext->instruction.operand_count_visible, buffer, sizeof(buffer), runtime_address, ZYAN_NULL);
+        puts(buffer);
+        #endif
+        
+        LLVMValueRef value;
+        
+        if (zcontext->instruction.operand_count_visible == 1) {
+            value = get_operand_value(jcontext->builder, &zcontext->operands[0], jcontext->cpu_ptr, jcontext->cpu_struct_type, phdr, raw_bin);
+        } else if (zcontext->instruction.operand_count_visible >= 2) {
+            value = get_operand_value(jcontext->builder, &zcontext->operands[1], jcontext->cpu_ptr, jcontext->cpu_struct_type, phdr, raw_bin);
+        }
+                    
+        switch (zcontext->instruction.mnemonic) {
+            case ZYDIS_MNEMONIC_JMP: {
+                ZydisCalcAbsoluteAddress(
+                    &zcontext->instruction,
+                    &zcontext->operands[0],
+                    runtime_address,
+                    &dcpu->rip
+                );
+                
+                phdr = find_phdr(phnum, dcpu->rip);
+                uint64_t new_addr = (uint64_t)access_quest(dcpu->rip, phdr, raw_bin);
+                
+                vector_insert(data, 0, (ZyanU8*)new_addr);
+                offset = phdr->p_filesz; // break "while"
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_MOV: {
+                set_operand_value(value, jcontext->builder, &zcontext->operands[0], jcontext->cpu_ptr, jcontext->cpu_struct_type, dcpu);
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_XOR: {
+                int reg_idx = get_register_index(zcontext->operands[0].reg.value);
+                LLVMValueRef reg_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, reg_idx);
+                set_operand_value(LLVMBuildXor(jcontext->builder, LLVMBuildLoad2(jcontext->builder, i64, reg_ptr, "load_tmp"), 
+                                                   value, "xor_tmp"), jcontext->builder, &zcontext->operands[0], jcontext->cpu_ptr, jcontext->cpu_struct_type, dcpu);
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_ADD: {
+                int reg_idx = get_register_index(zcontext->operands[0].reg.value);
+                LLVMValueRef reg_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, reg_idx);
+                set_operand_value(LLVMBuildAdd(jcontext->builder, LLVMBuildLoad2(jcontext->builder, i64, reg_ptr, "load_tmp"), 
+                                                    value, "add_tmp"), jcontext->builder, &zcontext->operands[0], jcontext->cpu_ptr, jcontext->cpu_struct_type, dcpu);
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_SUB: {
+                int reg_idx = get_register_index(zcontext->operands[0].reg.value);
+                LLVMValueRef reg_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, reg_idx);
+                set_operand_value(LLVMBuildSub(jcontext->builder, LLVMBuildLoad2(jcontext->builder, i64, reg_ptr, "load_tmp"), 
+                                                    value, "sub_tmp"), jcontext->builder, &zcontext->operands[0], jcontext->cpu_ptr, jcontext->cpu_struct_type, dcpu);
+                break;
+            }
+              
+            case ZYDIS_MNEMONIC_SYSCALL: {
+                  LLVMValueRef args[] = { jcontext->cpu_ptr };
+                  LLVMBuildCall2(jcontext->builder, jcontext->func_type, jcontext->syscall_handler, args, 1, "");
+                  
+                  if (dcpu->gprs[0] == 60) {   // sys_exit
+                      offset = phdr->p_filesz; // break "while"
+                  }
+                  break;
+            }
+            
+            case ZYDIS_MNEMONIC_INT: {
+                  if (zcontext->operands[0].imm.value.u == 0x80) {
+                      LLVMValueRef args[] = { jcontext->cpu_ptr };
+                      LLVMBuildCall2(jcontext->builder, jcontext->func_type, jcontext->int80_handler, args, 1, "");
+                      
+                      if (dcpu->gprs[0] == 1) {   // sys_exit
+                          offset = phdr->p_filesz; // break "while"
+                      }
+                  }
+                  break;
+            }
+            
+            default: {
+                  printf("PANIC!!!\nUnsupported instruction: %s\n", ZydisMnemonicGetString(zcontext->instruction.mnemonic));
+                  break;
+            }
+        }
+        
+        offset += zcontext->instruction.length;
+        runtime_address += zcontext->instruction.length;
+    }
+    
+    if (vector_size(*data) > 1) {
+        vector_remove(*data, 1);
+    } else {
+        vector_remove(*data, 0);
     }
 }

@@ -5,7 +5,7 @@ GElf_Phdr* phdrs;
 CPUState cpu = {0};
 
 int main(int argc, char** argv) {
-    printf("Karton Emu ; 02.2026\n");
+    printf("Karton Emu ; 03.2026\n");
     errno = 0;
     
     if (argc != 2) {
@@ -186,8 +186,7 @@ int main(int argc, char** argv) {
     }
     
     ZyanU8** data = vector_create();
-    vector_add(&data, access_quest(entry_point, 
-        find_phdr(phnum, entry_point), raw_bin));
+    vector_add(&data, (ZyanU8*)entry_point);
     
     GElf_Phdr phdr = *find_phdr(phnum, entry_point);
     

@@ -88,11 +88,14 @@ void set_operand_value(LLVMValueRef value, LLVMBuilderRef builder, ZydisDecodedO
     }
 }
 
-void gen_ir(ZyanU8*** data, GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, CPUState *dcpu, ZydisCtx *zcontext, JITCtx *jcontext) {
-    ZyanUSize offset = 0;
-    ZyanU64 runtime_address = dcpu->rip;
+void gen_ir(ZyanU8*** qdata, GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, CPUState *dcpu, ZydisCtx *zcontext, JITCtx *jcontext) {
+    ZyanU8* data = access_quest((uint64_t)*qdata[0], find_phdr(phnum, (uint64_t)*qdata[0]), raw_bin);
+    int num = 0;
     
-    while (offset < phdr->p_filesz && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&zcontext->decoder, *data[0] + offset, phdr->p_filesz - offset, &zcontext->instruction, zcontext->operands))) {
+    ZyanUSize offset = 0;
+    ZyanU64 runtime_address = (uint64_t)*qdata[0];
+    
+    while (offset < phdr->p_filesz && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&zcontext->decoder, data + offset, phdr->p_filesz - offset, &zcontext->instruction, zcontext->operands))) {
         #ifdef DEBUG
         printf("%016" PRIX64 "  ", runtime_address);
         
@@ -111,18 +114,35 @@ void gen_ir(ZyanU8*** data, GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, 
                     
         switch (zcontext->instruction.mnemonic) {
             case ZYDIS_MNEMONIC_JMP: {
+                uint64_t new_addr;
+                
                 ZydisCalcAbsoluteAddress(
                     &zcontext->instruction,
                     &zcontext->operands[0],
                     runtime_address,
-                    &dcpu->rip
+                    &new_addr
                 );
                 
-                phdr = find_phdr(phnum, dcpu->rip);
-                uint64_t new_addr = (uint64_t)access_quest(dcpu->rip, phdr, raw_bin);
-                
-                vector_insert(data, 0, (ZyanU8*)new_addr);
+                vector_insert(qdata, 0, (ZyanU8*)new_addr);
                 offset = phdr->p_filesz; // break "while"
+                num++;
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_CALL: {
+                uint64_t new_addr;
+                
+                ZydisCalcAbsoluteAddress(
+                    &zcontext->instruction,
+                    &zcontext->operands[0],
+                    runtime_address,
+                    &new_addr
+                );
+                
+                vector_insert(qdata, 0, (ZyanU8*)new_addr);
+                vector_insert(qdata, 1, (ZyanU8*)(runtime_address + zcontext->instruction.length));
+                offset = phdr->p_filesz; // break "while"
+                num += 2;
                 break;
             }
             
@@ -177,6 +197,11 @@ void gen_ir(ZyanU8*** data, GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, 
                   break;
             }
             
+            case ZYDIS_MNEMONIC_RET: {
+                offset = phdr->p_filesz; // break "while"
+                break;
+            }
+            
             default: {
                   printf("PANIC!!!\nUnsupported instruction: %s\n", ZydisMnemonicGetString(zcontext->instruction.mnemonic));
                   break;
@@ -187,9 +212,5 @@ void gen_ir(ZyanU8*** data, GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, 
         runtime_address += zcontext->instruction.length;
     }
     
-    if (vector_size(*data) > 1) {
-        vector_remove(*data, 1);
-    } else {
-        vector_remove(*data, 0);
-    }
+    vector_remove(*qdata, num);
 }

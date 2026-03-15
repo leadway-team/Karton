@@ -176,9 +176,6 @@ int main(int argc, char** argv) {
     ZydisDecoderInit(&zcontext.decoder, mode, width);
     ZydisFormatterInit(&zcontext.formatter, ZYDIS_FORMATTER_STYLE_INTEL);
     
-    CPUState dcpu = {0};
-    dcpu.rip = entry_point;
-    
     for (ZyanUSize i = 0; i < phnum; i++) {
         GElf_Phdr phdr;
         gelf_getphdr(e, i, &phdr);
@@ -192,7 +189,7 @@ int main(int argc, char** argv) {
     
     while (vector_size(data)) {
         init_llir(&jcontext);
-        gen_ir(&data, &phdr, phnum, raw_bin, &dcpu, &zcontext, &jcontext);
+        gen_ir(&data, &phdr, phnum, raw_bin, &zcontext, &jcontext);
         run_ir(&jcontext);
     }
     

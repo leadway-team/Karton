@@ -5,7 +5,7 @@ GElf_Phdr* phdrs;
 CPUState cpu = {0};
 
 int main(int argc, char** argv) {
-    printf("Karton Emu ; 03.2026\n");
+    printf("Karton Emu ; 04.2026\n");
     errno = 0;
     
     if (argc != 2) {
@@ -109,7 +109,9 @@ int main(int argc, char** argv) {
     if (ehdr.e_type != ET_EXEC && ehdr.e_type != ET_DYN) {
         printf("Not executable file, internal error code 6.\n");
         return 6;
-    }
+    } 
+    
+    cpu.gprs[4] = (uint64_t)mmap(NULL, 8388608, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) + 8388608;
     
     JITCtx jcontext;
     jcontext.mod = LLVMModuleCreateWithName("karton_module");
@@ -182,14 +184,15 @@ int main(int argc, char** argv) {
         vector_add(&phdrs, phdr);
     }
     
-    ZyanU8** data = vector_create();
-    vector_add(&data, (ZyanU8*)entry_point);
-    
     GElf_Phdr phdr = *find_phdr(phnum, entry_point);
     
-    while (vector_size(data)) {
-        init_llir(&jcontext);
-        gen_ir(&data, &phdr, phnum, raw_bin, &zcontext, &jcontext);
+    cpu.rip = (uint64_t)access_quest(entry_point, &phdr, raw_bin);
+    
+    // TODO: set a normal condition
+    while (1) {
+        if(!init_llir(&jcontext)) {
+            gen_ir(&phdr, phnum, raw_bin, &zcontext, &jcontext);
+        }
         run_ir(&jcontext);
     }
     

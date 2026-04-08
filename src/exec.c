@@ -145,8 +145,7 @@ void run_ir(JITCtx *jcontext, char* func_name) {
     
     LLVMErrorRef Err;
     
-    LLVMOrcThreadSafeContextRef TSCtx = LLVMOrcCreateNewThreadSafeContext();
-    LLVMOrcThreadSafeModuleRef TSM = LLVMOrcCreateNewThreadSafeModule(jcontext->mod, TSCtx);
+    LLVMOrcThreadSafeModuleRef TSM = LLVMOrcCreateNewThreadSafeModule(jcontext->mod, jcontext->TSCtx);
     
     Err = LLVMOrcLLJITAddLLVMIRModule(jcontext->JIT, jcontext->MainJD, TSM);
     if (Err) {
@@ -170,6 +169,5 @@ void run_ir(JITCtx *jcontext, char* func_name) {
     
     compiled_start(&cpu);
     
-    LLVMOrcDisposeThreadSafeContext(TSCtx);
     jcontext->mod = NULL;
 }

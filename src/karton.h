@@ -48,6 +48,7 @@ typedef struct {
     LLVMValueRef syscall_handler;
     LLVMValueRef int80_handler;
     LLVMTypeRef func_type;
+    LLVMOrcThreadSafeContextRef TSCtx;
 } JITCtx;
 
 /* see main.c */

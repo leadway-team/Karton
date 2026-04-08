@@ -187,6 +187,7 @@ int main(int argc, char** argv) {
     GElf_Phdr phdr = *find_phdr(phnum, entry_point);
     
     cpu.rip = (uint64_t)access_quest(entry_point, &phdr, raw_bin);
+    jcontext.TSCtx = LLVMOrcCreateNewThreadSafeContext();
     
     // TODO: set a normal condition
     while (1) {
@@ -210,6 +211,7 @@ int main(int argc, char** argv) {
         }
     }
     
+    LLVMOrcDisposeThreadSafeContext(jcontext.TSCtx);
     vector_free(&phdrs);
     LLVMOrcDisposeLLJIT(jcontext.JIT);
     LLVMOrcReleaseSymbolStringPoolEntry(S_syscall);

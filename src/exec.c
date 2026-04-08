@@ -165,9 +165,9 @@ void run_ir(JITCtx *jcontext, char* func_name) {
     
     #ifdef DEBUG
     printf("---- DEBUG: PREPARATIONS FOR JIT - DONE. ----\n");
+    printf("Starting JIT execution (block %lx)...\n", cpu.rip);
     #endif
     
-    printf("Starting JIT execution (block %lx)...\n", cpu.rip);
     compiled_start(&cpu);
     
     LLVMOrcDisposeThreadSafeContext(TSCtx);

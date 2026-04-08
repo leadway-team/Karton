@@ -203,7 +203,9 @@ int main(int argc, char** argv) {
             run_ir(&jcontext, func_name);
         } else {
             void (*compiled_start)(CPUState*) = (void (*)(CPUState*))func_ptr;
+            #ifdef DEBUG
             printf("Starting JIT execution (block %lx)...\n", cpu.rip);
+            #endif
             compiled_start(&cpu);
         }
     }

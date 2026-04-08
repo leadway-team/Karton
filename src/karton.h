@@ -60,8 +60,8 @@ extern struct json_object *jsoncalls;
 extern struct json_object *jsonints;
 void helper_syscall(CPUState *cpu);
 void helper_int80(CPUState *cpu);
-int init_llir(JITCtx *jcontext);
-void run_ir(JITCtx *jcontext);
+void init_llir(JITCtx *jcontext, char* func_name);
+void run_ir(JITCtx *jcontext, char* func_name);
 
 /* see gen.c */
 GElf_Phdr* find_phdr(ZyanUSize phnum, uint64_t addr);

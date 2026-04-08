@@ -190,10 +190,22 @@ int main(int argc, char** argv) {
     
     // TODO: set a normal condition
     while (1) {
-        if(!init_llir(&jcontext)) {
+        char func_name[64];
+        snprintf(func_name, sizeof(func_name), "block_%lx", cpu.rip);
+        
+        LLVMOrcExecutorAddress func_ptr;
+        LLVMErrorRef err = LLVMOrcLLJITLookup(jcontext.JIT, &func_ptr, func_name);
+        
+        if(err) {
+            LLVMDisposeErrorMessage(LLVMGetErrorMessage(err));
+            init_llir(&jcontext, func_name);
             gen_ir(&phdr, phnum, raw_bin, &zcontext, &jcontext);
+            run_ir(&jcontext, func_name);
+        } else {
+            void (*compiled_start)(CPUState*) = (void (*)(CPUState*))func_ptr;
+            printf("Starting JIT execution (block %lx)...\n", cpu.rip);
+            compiled_start(&cpu);
         }
-        run_ir(&jcontext);
     }
     
     vector_free(&phdrs);

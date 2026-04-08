@@ -123,25 +123,8 @@ void helper_int80(CPUState *cpu) {
     }
 }
 
-int64_t num;
-
-int init_llir(JITCtx *jcontext) {
+void init_llir(JITCtx *jcontext, char* func_name) {
     jcontext->mod = LLVMModuleCreateWithName("karton_module");
-    num = cpu.rip;
-    
-    char func_name[64];
-    snprintf(func_name, sizeof(func_name), "block_%lx", num);
-    
-    LLVMOrcExecutorAddress existing_addr;
-    LLVMErrorRef err = LLVMOrcLLJITLookup(jcontext->JIT, &existing_addr, func_name);
-    
-    if (!err && existing_addr != 0) {
-        return 1;
-    }
-    if (err) {
-        LLVMDisposeErrorMessage(LLVMGetErrorMessage(err));
-    }
-    
     LLVMTypeRef ret_type = LLVMFunctionType(LLVMVoidType(), &jcontext->cpu_ptr_type, 1, 0);
     LLVMValueRef func = LLVMAddFunction(jcontext->mod, func_name, ret_type);
     LLVMBasicBlockRef entry = LLVMAppendBasicBlock(func, "entry");
@@ -149,11 +132,9 @@ int init_llir(JITCtx *jcontext) {
     jcontext->builder = LLVMCreateBuilder();
     LLVMPositionBuilderAtEnd(jcontext->builder, entry);
     jcontext->cpu_ptr = LLVMGetParam(func, 0);
-    
-    return 0;
 }
 
-void run_ir(JITCtx *jcontext) {
+void run_ir(JITCtx *jcontext, char* func_name) {
     LLVMBuildRetVoid(jcontext->builder);
     LLVMDisposeBuilder(jcontext->builder);
     
@@ -173,9 +154,6 @@ void run_ir(JITCtx *jcontext) {
         exit(6);
     }
     
-    char func_name[64];
-    snprintf(func_name, sizeof(func_name), "block_%lx", num);
-    
     LLVMOrcExecutorAddress func_ptr;
     Err = LLVMOrcLLJITLookup(jcontext->JIT, &func_ptr, func_name);
     if (Err) {
@@ -189,7 +167,7 @@ void run_ir(JITCtx *jcontext) {
     printf("---- DEBUG: PREPARATIONS FOR JIT - DONE. ----\n");
     #endif
     
-    printf("Starting JIT execution (block %lx)...\n", num);
+    printf("Starting JIT execution (block %lx)...\n", cpu.rip);
     compiled_start(&cpu);
     
     LLVMOrcDisposeThreadSafeContext(TSCtx);

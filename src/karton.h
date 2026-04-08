@@ -51,10 +51,16 @@ typedef struct {
     LLVMOrcThreadSafeContextRef TSCtx;
 } JITCtx;
 
+typedef struct {
+    uint64_t rip;
+    void (*fn)(CPUState*);
+} Cache;
+
 /* see main.c */
 extern LLVMTypeRef i64;
 extern GElf_Phdr* phdrs;
 extern CPUState cpu;
+extern Cache block_cache[4096];
 
 /* see exec.c */
 extern struct json_object *jsoncalls;

@@ -3,6 +3,7 @@
 LLVMTypeRef i64;
 GElf_Phdr* phdrs;
 CPUState cpu = {0};
+Cache block_cache[4096] = {0};
 
 int main(int argc, char** argv) {
     printf("Karton Emu ; 04.2026\n");
@@ -194,20 +195,21 @@ int main(int argc, char** argv) {
         char func_name[64];
         snprintf(func_name, sizeof(func_name), "block_%lx", cpu.rip);
         
-        LLVMOrcExecutorAddress func_ptr;
-        LLVMErrorRef err = LLVMOrcLLJITLookup(jcontext.JIT, &func_ptr, func_name);
+        //LLVMOrcExecutorAddress func_ptr;
+        //LLVMErrorRef err = LLVMOrcLLJITLookup(jcontext.JIT, &func_ptr, func_name);
         
-        if(err) {
-            LLVMDisposeErrorMessage(LLVMGetErrorMessage(err));
+        Cache* entry = &block_cache[(cpu.rip >> 2) & (4095)];
+        
+        if(entry->rip != cpu.rip) {
+            //LLVMDisposeErrorMessage(LLVMGetErrorMessage(err));
             init_llir(&jcontext, func_name);
             gen_ir(&phdr, phnum, raw_bin, &zcontext, &jcontext);
             run_ir(&jcontext, func_name);
         } else {
-            void (*compiled_start)(CPUState*) = (void (*)(CPUState*))func_ptr;
             #ifdef DEBUG
             printf("Starting JIT execution (block %lx)...\n", cpu.rip);
             #endif
-            compiled_start(&cpu);
+            entry->fn(&cpu);
         }
     }
     

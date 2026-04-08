@@ -167,7 +167,12 @@ void run_ir(JITCtx *jcontext, char* func_name) {
     printf("Starting JIT execution (block %lx)...\n", cpu.rip);
     #endif
     
+    Cache* entry = &block_cache[(cpu.rip >> 2) & (4095)];
+    entry->rip = cpu.rip;
+    
     compiled_start(&cpu);
+    
+    entry->fn = compiled_start;
     
     jcontext->mod = NULL;
 }

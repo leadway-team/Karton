@@ -75,7 +75,7 @@ GElf_Phdr* find_phdr(ZyanUSize phnum, uint64_t addr);
 void* access_quest(uint64_t guest_addr, GElf_Phdr *phdr, uint8_t *raw_bin);
 LLVMValueRef get_reg_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_type, int reg_idx);
 int get_register_index(ZydisRegister reg);
-LLVMValueRef get_operand_value(LLVMBuilderRef builder, ZydisDecodedOperand *operand, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_struct_type, GElf_Phdr *phdr, uint8_t *raw_bin);
-void set_operand_value(LLVMValueRef value, LLVMBuilderRef builder, int reg, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_struct_type);
+LLVMValueRef get_operand_value(JITCtx *jcontext, ZydisCtx *zcontext, ZydisDecodedOperand *operand, int64_t runtime_address, GElf_Phdr *phdr, uint8_t *raw_bin);
+void set_operand_value(LLVMValueRef value, JITCtx *jcontext, ZydisCtx *zcontext, ZydisDecodedOperand *operand, int64_t runtime_address);
 void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, ZydisCtx *zcontext, JITCtx *jcontext);
 

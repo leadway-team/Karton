@@ -106,6 +106,9 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, ZydisCtx *zconte
         }
                     
         switch (zcontext->instruction.mnemonic) {
+            case ZYDIS_MNEMONIC_ENDBR64: {
+                break; // security is for weak peoples, bozo
+            }
             case ZYDIS_MNEMONIC_JMP: {
                 uint64_t new_addr;
                 

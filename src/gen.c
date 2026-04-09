@@ -230,6 +230,13 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, ZydisCtx *zconte
                 break;
             }
             
+            case ZYDIS_MNEMONIC_LEA: {
+                LLVMValueRef addr = compute_mem_addr(jcontext, &zcontext->operands[1], 
+                                                     zcontext->instruction, runtime_address);
+                set_operand_value(addr, jcontext, zcontext, &zcontext->operands[0], runtime_address);
+                break;
+            }
+            
             case ZYDIS_MNEMONIC_XOR: {
                 int reg_idx = get_register_index(zcontext->operands[0].reg.value);
                 LLVMValueRef reg_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, reg_idx);

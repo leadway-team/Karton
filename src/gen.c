@@ -30,6 +30,14 @@ LLVMValueRef get_reg_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMTypeR
     return LLVMBuildInBoundsGEP2(builder, cpu_type, cpu_ptr, indices, num, "reg_ptr");
 }
 
+LLVMValueRef get_flag_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_type, int field_idx) {
+    LLVMValueRef indices[] = {
+        LLVMConstInt(LLVMInt64Type(), 0, 0),
+        LLVMConstInt(LLVMInt32Type(), field_idx, 0)
+    };
+    return LLVMBuildInBoundsGEP2(builder, cpu_type, cpu_ptr, indices, 2, "flag_ptr");
+}
+
 int get_register_index(ZydisRegister reg) {
     if (reg >= ZYDIS_REGISTER_RAX && reg <= ZYDIS_REGISTER_RDI) {
         return reg - ZYDIS_REGISTER_RAX;
@@ -258,6 +266,51 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, ZydisCtx *zconte
                 LLVMValueRef reg_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, reg_idx);
                 set_operand_value(LLVMBuildSub(jcontext->builder, LLVMBuildLoad2(jcontext->builder, i64, reg_ptr, "load_tmp"), 
                                                     value, "sub_tmp"), jcontext, zcontext, &zcontext->operands[0], runtime_address);
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_INC: {
+                int reg_idx = get_register_index(zcontext->operands[0].reg.value);
+                LLVMValueRef reg_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, reg_idx);
+                set_operand_value(LLVMBuildAdd(jcontext->builder, LLVMBuildLoad2(jcontext->builder, i64, reg_ptr, "load_tmp"), 
+                                  LLVMConstInt(i64, 1, 0), "inc_tmp"), jcontext, zcontext, &zcontext->operands[0], runtime_address);
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_DEC: {
+                int reg_idx = get_register_index(zcontext->operands[0].reg.value);
+                LLVMValueRef reg_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, reg_idx);
+                set_operand_value(LLVMBuildSub(jcontext->builder, LLVMBuildLoad2(jcontext->builder, i64, reg_ptr, "load_tmp"), 
+                                  LLVMConstInt(i64, 1, 0), "dec_tmp"), jcontext, zcontext, &zcontext->operands[0], runtime_address);
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_CMP: {
+                LLVMValueRef lhs = get_operand_value(jcontext, zcontext, &zcontext->operands[0], runtime_address, phdr, raw_bin);
+                LLVMValueRef result = LLVMBuildSub(jcontext->builder, lhs, value, "cmp_result");
+                
+                LLVMValueRef is_eq  = LLVMBuildICmp(jcontext->builder, LLVMIntEQ,  lhs, value, "zf_cmp");
+                LLVMValueRef is_neg = LLVMBuildICmp(jcontext->builder, LLVMIntSLT, result, LLVMConstInt(i64, 0, 0), "sf_cmp");
+                LLVMValueRef is_ult = LLVMBuildICmp(jcontext->builder, LLVMIntULT, lhs, value, "cf_cmp");
+                
+                LLVMValueRef signs_diff = LLVMBuildICmp(jcontext->builder, LLVMIntSLT,
+                                                LLVMBuildXor(jcontext->builder, lhs, value, "xor_signs"),
+                                                LLVMConstInt(i64, 0, 0), "signs_diff");
+                LLVMValueRef result_sign_diffs = LLVMBuildICmp(jcontext->builder, LLVMIntSLT,
+                                                LLVMBuildXor(jcontext->builder, result, lhs, "xor_res"),
+                                                LLVMConstInt(i64, 0, 0), "res_sign_diff");
+                LLVMValueRef is_of = LLVMBuildAnd(jcontext->builder, signs_diff, result_sign_diffs, "of_cmp");
+                
+                LLVMTypeRef i8 = LLVMInt8Type();
+                LLVMValueRef zf_val = LLVMBuildZExt(jcontext->builder, is_eq,  i8, "zf_i8");
+                LLVMValueRef sf_val = LLVMBuildZExt(jcontext->builder, is_neg, i8, "sf_i8");
+                LLVMValueRef cf_val = LLVMBuildZExt(jcontext->builder, is_ult, i8, "cf_i8");
+                LLVMValueRef of_val = LLVMBuildZExt(jcontext->builder, is_of,  i8, "of_i8");
+                
+                LLVMBuildStore(jcontext->builder, zf_val, get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 2));
+                LLVMBuildStore(jcontext->builder, sf_val, get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 3));
+                LLVMBuildStore(jcontext->builder, cf_val, get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 4));
+                LLVMBuildStore(jcontext->builder, of_val, get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 5));
                 break;
             }
             

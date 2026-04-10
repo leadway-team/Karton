@@ -28,6 +28,11 @@
 typedef struct {
     uint64_t gprs[16]; // rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8-r15 | eax, ecx, ..etc
     uint64_t rip;
+    uint8_t zf;
+    uint8_t sf;
+    uint8_t cf;
+    uint8_t of;
+    uint8_t df; 
 } CPUState;
 
 typedef struct {
@@ -58,6 +63,7 @@ typedef struct {
 
 /* see main.c */
 extern LLVMTypeRef i64;
+extern LLVMTypeRef i8;
 extern GElf_Phdr* phdrs;
 extern CPUState cpu;
 extern Cache block_cache[4096];

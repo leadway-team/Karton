@@ -269,6 +269,31 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, ZydisCtx *zconte
                 break;
             }
             
+            case ZYDIS_MNEMONIC_DIV: {
+                LLVMTypeRef i128 = LLVMInt128Type();
+                ZydisDecodedOperand fake_rax; fake_rax.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rax.reg.value = ZYDIS_REGISTER_RAX;
+                ZydisDecodedOperand fake_rdx; fake_rdx.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rdx.reg.value = ZYDIS_REGISTER_RDX;
+                LLVMValueRef rax = get_operand_value(jcontext, zcontext, &fake_rax, runtime_address, phdr, raw_bin);
+                LLVMValueRef rdx = get_operand_value(jcontext, zcontext, &fake_rdx, runtime_address, phdr, raw_bin);
+                
+                LLVMValueRef rdx128 = LLVMBuildZExt(jcontext->builder, rdx, i128, "");
+                LLVMValueRef rax128  = LLVMBuildZExt(jcontext->builder, rax, i128, "");
+                LLVMValueRef value128  = LLVMBuildZExt(jcontext->builder, value, i128, "");
+                
+                LLVMValueRef rdx128_shifted = LLVMBuildShl(jcontext->builder, rdx128, LLVMConstInt(i128, 64, 0), "");
+                LLVMValueRef full128 = LLVMBuildOr(jcontext->builder, rdx128_shifted, rax128, "combined_128");
+
+                LLVMValueRef dived = LLVMBuildUDiv(jcontext->builder, full128, value128, "div_tmp");
+                LLVMValueRef remed = LLVMBuildURem(jcontext->builder, full128, value128, "rem_tmp");
+                
+                LLVMValueRef dived64 = LLVMBuildTrunc(jcontext->builder, dived, i64, "dived64_tmp");
+                LLVMValueRef remed64  = LLVMBuildTrunc(jcontext->builder, remed, i64, "remed64_tmp");
+                
+                set_operand_value(dived64, jcontext, zcontext, &fake_rax, runtime_address);
+                set_operand_value(remed64, jcontext, zcontext, &fake_rdx, runtime_address);
+                break;
+            }
+            
             case ZYDIS_MNEMONIC_INC: {
                 int reg_idx = get_register_index(zcontext->operands[0].reg.value);
                 LLVMValueRef reg_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, reg_idx);
@@ -311,6 +336,11 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, ZydisCtx *zconte
                 LLVMBuildStore(jcontext->builder, sf_val, get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 3));
                 LLVMBuildStore(jcontext->builder, cf_val, get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 4));
                 LLVMBuildStore(jcontext->builder, of_val, get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 5));
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_CLD: {
+                LLVMBuildStore(jcontext->builder, LLVMConstInt(i8, 0, 0), get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 6));
                 break;
             }
             

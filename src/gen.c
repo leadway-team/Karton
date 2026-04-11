@@ -326,7 +326,6 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, ZydisCtx *zconte
                                                 LLVMConstInt(i64, 0, 0), "res_sign_diff");
                 LLVMValueRef is_of = LLVMBuildAnd(jcontext->builder, signs_diff, result_sign_diffs, "of_cmp");
                 
-                LLVMTypeRef i8 = LLVMInt8Type();
                 LLVMValueRef zf_val = LLVMBuildZExt(jcontext->builder, is_eq,  i8, "zf_i8");
                 LLVMValueRef sf_val = LLVMBuildZExt(jcontext->builder, is_neg, i8, "sf_i8");
                 LLVMValueRef cf_val = LLVMBuildZExt(jcontext->builder, is_ult, i8, "cf_i8");

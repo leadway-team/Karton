@@ -335,6 +335,25 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
                 break;
             }
             
+            case ZYDIS_MNEMONIC_AND: {
+                int reg_idx = get_register_index(zcontext->operands[0].reg.value);
+                LLVMValueRef reg_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, reg_idx);
+                LLVMValueRef result = LLVMBuildAnd(jcontext->builder, LLVMBuildLoad2(jcontext->builder, i64, reg_ptr, "load_tmp"), value, "and_tmp");
+                set_operand_value(result, jcontext, zcontext, &zcontext->operands[0], runtime_address);
+                
+                LLVMValueRef is_zero = LLVMBuildICmp(jcontext->builder, LLVMIntEQ,  result, LLVMConstInt(i64, 0, 0), "zf_and");
+                LLVMValueRef is_neg  = LLVMBuildICmp(jcontext->builder, LLVMIntSLT, result, LLVMConstInt(i64, 0, 0), "sf_and");
+                LLVMBuildStore(jcontext->builder, LLVMBuildZExt(jcontext->builder, is_zero, i8, "zf_i8"),
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 2));
+                LLVMBuildStore(jcontext->builder, LLVMBuildZExt(jcontext->builder, is_neg, i8, "sf_i8"),
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 3));
+                LLVMBuildStore(jcontext->builder, LLVMConstInt(i8, 0, 0),
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 4)); // CF = 0
+                LLVMBuildStore(jcontext->builder, LLVMConstInt(i8, 0, 0),
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 5)); // OF = 0
+                break;
+            }
+            
             case ZYDIS_MNEMONIC_ADD: {
                 int reg_idx = get_register_index(zcontext->operands[0].reg.value);
                 LLVMValueRef reg_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, reg_idx);

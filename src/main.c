@@ -234,6 +234,7 @@ int main(int argc, char** argv) {
            base_vaddr, top_vaddr, top_vaddr - base_vaddr);
     #endif
     
+    signal(SIGPIPE, SIG_IGN);
     while (1) {
         Cache *entry = cache_lookup(cpu.rip);
         

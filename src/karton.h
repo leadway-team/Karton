@@ -10,7 +10,8 @@
 #include <errno.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <libgen.h> 
+#include <libgen.h>
+#include <signal.h>
 
 #include <json-c/json.h>
 #include <json-c/json_util.h>

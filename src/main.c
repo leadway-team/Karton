@@ -4,7 +4,7 @@ LLVMTypeRef i64;
 LLVMTypeRef i8;
 GElf_Phdr* phdrs;
 CPUState cpu = {0};
-Cache block_cache[4096] = {0};
+Cache block_cache[65536] = {0};
 
 int main(int argc, char** argv) {
     printf("Karton Emu ; 04.2026\n");
@@ -58,28 +58,38 @@ int main(int argc, char** argv) {
         return -1;
     }
     
-    if (elf_version(EV_CURRENT) == EV_NONE) {
-        printf("Libelf error, internal error code 1.\n");
-        return 1;
-    }
-    
     int fd = open(argv[1], O_RDONLY, 0);
     if (fd < 0) {
         printf("Open file error, internal error code 2, \"open\" error code %d.\n", fd);
         return 2;
     }
     
+    char *binary_path = strdup(argv[1]);
+    char *dir = dirname(binary_path);
+    
+    if (chdir(dir) != 0) {
+        printf("chdir error: %s\n", strerror(errno));
+        return 2;
+    }
+    
+    free(binary_path);
+    
+    if (elf_version(EV_CURRENT) == EV_NONE) {
+        printf("Libelf error, internal error code 1.\n");
+        return 1;
+    }
+    
     struct stat st;
     int fst = fstat(fd, &st);
     if (fst < 0) {
-        printf("fstat error, internal error code 2, fstat error code %d.\n", fst); 
+        printf("fstat error, internal error code 2, fstat error code %d.\n", fst);
         return 2;
     }
     size_t file_size = st.st_size;
     
-    uint8_t* raw_bin = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    uint8_t* raw_bin = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (raw_bin == MAP_FAILED) {
-        printf("mmap error, internal error code 2.\n"); 
+        printf("mmap error, internal error code 2.\n");
         return 2;
     }
     
@@ -111,7 +121,48 @@ int main(int argc, char** argv) {
     if (ehdr.e_type != ET_EXEC && ehdr.e_type != ET_DYN) {
         printf("Not executable file, internal error code 6.\n");
         return 6;
-    } 
+    }
+    
+    ZyanUSize phnum;
+    elf_getphdrnum(e, &phnum);
+    
+    uint64_t base_vaddr = UINT64_MAX, top_vaddr = 0;
+    for (ZyanUSize i = 0; i < phnum; i++) {
+        GElf_Phdr phdr;
+        gelf_getphdr(e, i, &phdr);
+        if (phdr.p_type != PT_LOAD) continue;
+        if (phdr.p_vaddr < base_vaddr) base_vaddr = phdr.p_vaddr;
+        if (phdr.p_vaddr + phdr.p_memsz > top_vaddr) top_vaddr = phdr.p_vaddr + phdr.p_memsz;
+    }
+    
+    uint8_t *mem_image = calloc(1, top_vaddr - base_vaddr);
+    if (!mem_image) {
+        printf("calloc error, internal error code 2.\n");
+        return 2;
+    }
+    
+    for (ZyanUSize i = 0; i < phnum; i++) {
+        GElf_Phdr phdr;
+        gelf_getphdr(e, i, &phdr);
+        if (phdr.p_type != PT_LOAD) continue;
+        memcpy(mem_image + (phdr.p_vaddr - base_vaddr),
+               raw_bin   +  phdr.p_offset,
+               phdr.p_filesz);
+    }
+    
+    phdrs = vector_create();
+    for (ZyanUSize i = 0; i < phnum; i++) {
+        GElf_Phdr phdr;
+        gelf_getphdr(e, i, &phdr);
+        vector_add(&phdrs, phdr);
+    }
+    
+    ZyanU64 entry_point = ehdr.e_entry;
+    
+    elf_end(e);
+    close(fd);
+    munmap(raw_bin, file_size);
+    raw_bin = NULL;
     
     cpu.gprs[4] = (uint64_t)mmap(NULL, 8388608, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) + 8388608;
     
@@ -121,17 +172,17 @@ int main(int argc, char** argv) {
     jcontext.cpu_struct_type = LLVMStructCreateNamed(LLVMGetGlobalContext(), "CPUState");
     
     i64 = LLVMInt64Type();
-    i8 = LLVMInt8Type();
+    i8  = LLVMInt8Type();
     
     LLVMTypeRef array_type = LLVMArrayType(i64, 16);
-    LLVMTypeRef fields[] = { array_type, i64, i8, i8, i8, i8, i8 };
+    LLVMTypeRef fields[]   = { array_type, i64, i8, i8, i8, i8, i8 };
     LLVMStructSetBody(jcontext.cpu_struct_type, fields, 7, 0);
     jcontext.cpu_ptr_type = LLVMPointerType(jcontext.cpu_struct_type, 0);
     
     LLVMTypeRef param_types[] = { jcontext.cpu_ptr_type };
-    jcontext.func_type = LLVMFunctionType(LLVMVoidType(), param_types, 1, 0);
+    jcontext.func_type       = LLVMFunctionType(LLVMVoidType(), param_types, 1, 0);
     jcontext.syscall_handler = LLVMAddFunction(jcontext.mod, "helper_syscall", jcontext.func_type);
-    jcontext.int80_handler = LLVMAddFunction(jcontext.mod, "helper_int80", jcontext.func_type);
+    jcontext.int80_handler   = LLVMAddFunction(jcontext.mod, "helper_int80",   jcontext.func_type);
     
     LLVMInitializeNativeTarget();
     LLVMInitializeNativeAsmPrinter();
@@ -139,7 +190,6 @@ int main(int argc, char** argv) {
     
     LLVMOrcLLJITBuilderRef JITBuilder = LLVMOrcCreateLLJITBuilder();
     Err = LLVMOrcCreateLLJIT(&jcontext.JIT, JITBuilder);
-    
     if (Err) {
         printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
         return 6;
@@ -148,14 +198,14 @@ int main(int argc, char** argv) {
     jcontext.MainJD = LLVMOrcLLJITGetMainJITDylib(jcontext.JIT);
     
     LLVMOrcSymbolStringPoolEntryRef S_syscall = LLVMOrcLLJITMangleAndIntern(jcontext.JIT, "helper_syscall");
-    LLVMOrcSymbolStringPoolEntryRef S_int80 = LLVMOrcLLJITMangleAndIntern(jcontext.JIT, "helper_int80");
+    LLVMOrcSymbolStringPoolEntryRef S_int80   = LLVMOrcLLJITMangleAndIntern(jcontext.JIT, "helper_int80");
     LLVMJITSymbolFlags Flags = { LLVMJITSymbolGenericFlagsExported, 0 };
     LLVMOrcRetainSymbolStringPoolEntry(S_syscall);
     LLVMOrcRetainSymbolStringPoolEntry(S_int80);
     
     LLVMOrcCSymbolMapPair Symbols[] = {
         { S_syscall, { (LLVMOrcExecutorAddress)&helper_syscall, Flags } },
-        { S_int80,   { (LLVMOrcExecutorAddress)&helper_int80, Flags } }
+        { S_int80,   { (LLVMOrcExecutorAddress)&helper_int80,   Flags } }
     };
     
     LLVMOrcMaterializationUnitRef MU = LLVMOrcAbsoluteSymbols(Symbols, 2);
@@ -165,62 +215,53 @@ int main(int argc, char** argv) {
         return 6;
     }
     
-    ZyanU64 entry_point = ehdr.e_entry;
-    printf("Preparing is done 🎉\n");
-    
-    #ifdef DEBUG
-    printf("Entry point address: %lu\n", entry_point);
-    #endif
-    
-    phdrs = vector_create();
-    
-    ZyanUSize phnum;
-    elf_getphdrnum(e, &phnum);
+    jcontext.mem_image = mem_image;
+    jcontext.base_vaddr = base_vaddr;
     
     ZydisCtx zcontext;
     ZydisDecoderInit(&zcontext.decoder, mode, width);
     ZydisFormatterInit(&zcontext.formatter, ZYDIS_FORMATTER_STYLE_INTEL);
     
-    for (ZyanUSize i = 0; i < phnum; i++) {
-        GElf_Phdr phdr;
-        gelf_getphdr(e, i, &phdr);
-        vector_add(&phdrs, phdr);
-    }
+    cpu.rip = (uint64_t)access_quest(entry_point, mem_image, base_vaddr);
     
-    GElf_Phdr phdr = *find_phdr(phnum, entry_point);
-    
-    cpu.rip = (uint64_t)access_quest(entry_point, &phdr, raw_bin);
     jcontext.TSCtx = LLVMOrcCreateNewThreadSafeContext();
     
-    // TODO: set a normal condition
+    printf("Preparing is done 🎉\n");
+    
+    #ifdef DEBUG
+    printf("Entry point address: 0x%lx\n", entry_point);
+    printf("base_vaddr: 0x%lx  top_vaddr: 0x%lx  image_size: 0x%lx\n",
+           base_vaddr, top_vaddr, top_vaddr - base_vaddr);
+    #endif
+    
     while (1) {
-        char func_name[64];
-        snprintf(func_name, sizeof(func_name), "block_%lx", cpu.rip);
+        Cache *entry = cache_lookup(cpu.rip);
         
-        //LLVMOrcExecutorAddress func_ptr;
-        //LLVMErrorRef err = LLVMOrcLLJITLookup(jcontext.JIT, &func_ptr, func_name);
-        
-        Cache* entry = &block_cache[(cpu.rip >> 2) & (4095)];
-        
-        if(entry->rip != cpu.rip) {
-            //LLVMDisposeErrorMessage(LLVMGetErrorMessage(err));
+        if (entry->rip != cpu.rip) {
+            char func_name[64];
+            snprintf(func_name, sizeof(func_name), "block_%lx", cpu.rip);
+            
+            uint64_t guest_rip = cpu.rip - (uint64_t)mem_image + base_vaddr;
+            GElf_Phdr *cur_phdr = find_phdr(phnum, guest_rip);
+            if (!cur_phdr) {
+                printf("PANIC: rip 0x%lx (guest 0x%lx) outside any PT_LOAD segment\n",
+                       cpu.rip, guest_rip);
+                break;
+            }
+            
             init_llir(&jcontext, func_name);
-            gen_ir(&phdr, phnum, raw_bin, &zcontext, &jcontext);
-            run_ir(&jcontext, func_name);
-        } else {
-            #ifdef DEBUG
-            printf("Starting JIT execution (block %lx)...\n", cpu.rip);
-            #endif
-            entry->fn(&cpu);
+            gen_ir(cur_phdr, phnum, mem_image, base_vaddr, &zcontext, &jcontext);
+            run_ir(&jcontext, func_name, entry);
         }
+        
+        entry->fn(&cpu);
     }
     
     LLVMOrcDisposeThreadSafeContext(jcontext.TSCtx);
     vector_free(&phdrs);
+    free(mem_image);
     LLVMOrcDisposeLLJIT(jcontext.JIT);
     LLVMOrcReleaseSymbolStringPoolEntry(S_syscall);
     LLVMOrcReleaseSymbolStringPoolEntry(S_int80);
-    elf_end(e);
-    close(fd);
     return 0;
 }

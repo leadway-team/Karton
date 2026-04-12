@@ -50,12 +50,10 @@ void helper_syscall(CPUState *cpu) {
             } else if (strcmp("r10", string_arg) == 0) {
                 sargs[i] = r10;
             } else {
-                char *endptr;
-                sargs[i] = (uint64_t)strtoull(string_arg, &endptr, 10);
+                sargs[i] = (uint64_t)strtoull(string_arg, NULL, 10);
             }
         }
-        
-        syscall(rax, sargs[0], sargs[1], sargs[2], sargs[3], sargs[4], sargs[5]);
+        cpu->gprs[0] = syscall(rax, sargs[0], sargs[1], sargs[2], sargs[3], sargs[4], sargs[5]);
     } else {
         printf("JSON file doesn't contain required syscall!\n");
         printf("Internal error code 7\n");
@@ -110,17 +108,23 @@ void helper_int80(CPUState *cpu) {
             } else if (strcmp("ebp", string_arg) == 0) {
                 sargs[i] = ebp;
             } else {
-                char *endptr;
-                sargs[i] = (uint64_t)strtoull(string_arg, &endptr, 10);
+                sargs[i] = (uint64_t)strtoull(string_arg, NULL, 10);
             }
         }
-        
-        syscall(eax, sargs[0], sargs[1], sargs[2], sargs[3], sargs[4], sargs[5]);
+        cpu->gprs[0] = syscall(eax, sargs[0], sargs[1], sargs[2], sargs[3], sargs[4], sargs[5]);
     } else {
         printf("JSON file doesn't contain required (32-bit) syscall!\n");
         printf("Internal error code 7\n");
         exit(7);
     }
+}
+
+Cache* cache_lookup(uint64_t rip) {
+    uint32_t idx = (rip >> 2) & (65536 - 1);
+    while (block_cache[idx].rip != 0 && block_cache[idx].rip != rip) {
+        idx = (idx + 1) & (65536 - 1);
+    }
+    return &block_cache[idx];
 }
 
 void init_llir(JITCtx *jcontext, char* func_name) {
@@ -134,45 +138,21 @@ void init_llir(JITCtx *jcontext, char* func_name) {
     jcontext->cpu_ptr = LLVMGetParam(func, 0);
 }
 
-void run_ir(JITCtx *jcontext, char* func_name) {
+void run_ir(JITCtx *jcontext, char* func_name, Cache *cache_entry) {
     LLVMBuildRetVoid(jcontext->builder);
     LLVMDisposeBuilder(jcontext->builder);
     
-    #ifdef DEBUG
-    printf("---- DEBUG: GENERATED IR: ----\n");
-    LLVMDumpModule(jcontext->mod);
-    #endif
-    
     LLVMErrorRef Err;
-    
     LLVMOrcThreadSafeModuleRef TSM = LLVMOrcCreateNewThreadSafeModule(jcontext->mod, jcontext->TSCtx);
-    
     Err = LLVMOrcLLJITAddLLVMIRModule(jcontext->JIT, jcontext->MainJD, TSM);
-    if (Err) {
-        printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
-        exit(6);
-    }
+    if (Err) { printf("LLJIT error (add): %s\n", LLVMGetErrorMessage(Err)); exit(6); }
     
     LLVMOrcExecutorAddress func_ptr;
     Err = LLVMOrcLLJITLookup(jcontext->JIT, &func_ptr, func_name);
-    if (Err) {
-        printf("LLJIT creation error, internal error code 6, LLJIT error code %s.\n", LLVMGetErrorMessage(Err));
-        exit(6);
-    }
+    if (Err) { printf("LLJIT error (lookup): %s\n", LLVMGetErrorMessage(Err)); exit(6); }
     
-    void (*compiled_start)(CPUState*) = (void (*)(CPUState*))func_ptr;
-    
-    #ifdef DEBUG
-    printf("---- DEBUG: PREPARATIONS FOR JIT - DONE. ----\n");
-    printf("Starting JIT execution (block %lx)...\n", cpu.rip);
-    #endif
-    
-    Cache* entry = &block_cache[(cpu.rip >> 2) & (4095)];
-    entry->rip = cpu.rip;
-    
-    compiled_start(&cpu);
-    
-    entry->fn = compiled_start;
+    cache_entry->rip = cpu.rip;
+    cache_entry->fn  = (void(*)(CPUState*))func_ptr;
     
     jcontext->mod = NULL;
 }

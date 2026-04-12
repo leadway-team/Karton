@@ -482,6 +482,50 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *raw_bin, ZydisCtx *zconte
                 break;
             }
             
+            case ZYDIS_MNEMONIC_CMPSB: {
+                ZydisDecodedOperand fake_rsi = {0}; fake_rsi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rsi.reg.value = ZYDIS_REGISTER_RSI;
+                ZydisDecodedOperand fake_rdi = {0}; fake_rdi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rdi.reg.value = ZYDIS_REGISTER_RDI;
+                ZydisDecodedOperand fake_rcx = {0}; fake_rcx.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rcx.reg.value = ZYDIS_REGISTER_RCX;
+                
+                LLVMValueRef rsi_val = get_operand_value(jcontext, zcontext, &fake_rsi, runtime_address, phdr, raw_bin);
+                LLVMValueRef rdi_val = get_operand_value(jcontext, zcontext, &fake_rdi, runtime_address, phdr, raw_bin);
+                LLVMValueRef rcx_val = get_operand_value(jcontext, zcontext, &fake_rcx, runtime_address, phdr, raw_bin);
+                
+                LLVMTypeRef i8ptr = LLVMPointerType(LLVMInt8Type(), 0);
+                
+                if (zcontext->instruction.attributes & ZYDIS_ATTRIB_HAS_REPE) {
+                    LLVMTypeRef memcmp_type = LLVMFunctionType(
+                        LLVMInt32Type(),
+                        (LLVMTypeRef[]){ i8ptr, i8ptr, i64 },
+                        3, 0
+                    );
+                    LLVMValueRef memcmp_fn = LLVMGetNamedFunction(jcontext->mod, "memcmp");
+                    if (!memcmp_fn)
+                        memcmp_fn = LLVMAddFunction(jcontext->mod, "memcmp", memcmp_type);
+                    
+                    LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, rsi_val, i8ptr, "cmp_src");
+                    LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, rdi_val, i8ptr, "cmp_dst");
+                    
+                    LLVMValueRef result = LLVMBuildCall2(jcontext->builder, memcmp_type, memcmp_fn,
+                        (LLVMValueRef[]){ src_ptr, dst_ptr, rcx_val }, 3, "memcmp_result");
+                    
+                    LLVMValueRef is_eq = LLVMBuildICmp(jcontext->builder, LLVMIntEQ,
+                        result, LLVMConstInt(LLVMInt32Type(), 0, 0), "cmpsb_eq");
+                    LLVMValueRef zf_val = LLVMBuildZExt(jcontext->builder, is_eq, i8, "zf_i8");
+                    
+                    LLVMBuildStore(jcontext->builder, zf_val,
+                        get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 2));
+                    
+                    set_operand_value(LLVMBuildAdd(jcontext->builder, rsi_val, rcx_val, "rsi_new"),
+                                      jcontext, zcontext, &fake_rsi, runtime_address);
+                    set_operand_value(LLVMBuildAdd(jcontext->builder, rdi_val, rcx_val, "rdi_new"),
+                                      jcontext, zcontext, &fake_rdi, runtime_address);
+                    set_operand_value(LLVMConstInt(i64, 0, 0),
+                                      jcontext, zcontext, &fake_rcx, runtime_address);
+                }
+                break;
+            }
+            
             case ZYDIS_MNEMONIC_PUSH: {
                 LLVMValueRef rsp_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 4);
                 LLVMValueRef rsp_val = LLVMBuildLoad2(jcontext->builder, i64, rsp_ptr, "rsp_val");

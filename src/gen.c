@@ -93,13 +93,13 @@ LLVMValueRef get_operand_value(JITCtx *jcontext, ZydisCtx *zcontext, ZydisDecode
             }
             return LLVMConstInt(i64, tmp, 0);
         }
-
+        
         case ZYDIS_OPERAND_TYPE_MEMORY: {
             LLVMValueRef addr = compute_mem_addr(jcontext, operand, zcontext->instruction, runtime_address);
             
             LLVMTypeRef mem_type;
             switch (operand->size) {
-                case 8:  mem_type = LLVMInt8Type();  break;
+                case 8:  mem_type = i8;  break;
                 case 16: mem_type = LLVMInt16Type(); break;
                 case 32: mem_type = LLVMInt32Type(); break;
                 default: mem_type = i64;             break;
@@ -457,7 +457,7 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
                 LLVMValueRef rdi_val = get_operand_value(jcontext, zcontext, &fake_rdi, runtime_address, phnum, mem_image, base_vaddr);
                 LLVMValueRef rcx_val = get_operand_value(jcontext, zcontext, &fake_rcx, runtime_address, phnum, mem_image, base_vaddr);
                 
-                LLVMTypeRef i8ptr = LLVMPointerType(LLVMInt8Type(), 0);
+                LLVMTypeRef i8ptr = LLVMPointerType(i8, 0);
                 LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, rsi_val, i8ptr, "src_ptr");
                 LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, rdi_val, i8ptr, "dst_ptr");
                 
@@ -467,7 +467,7 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
                     set_operand_value(LLVMBuildAdd(jcontext->builder, rdi_val, rcx_val, "rdi_new"), jcontext, zcontext, &fake_rdi, runtime_address);
                     set_operand_value(LLVMConstInt(i64, 0, 0),                                      jcontext, zcontext, &fake_rcx, runtime_address);
                 } else {
-                    LLVMValueRef byte = LLVMBuildLoad2(jcontext->builder, LLVMInt8Type(), src_ptr, "movsb_byte");
+                    LLVMValueRef byte = LLVMBuildLoad2(jcontext->builder, i8, src_ptr, "movsb_byte");
                     LLVMBuildStore(jcontext->builder, byte, dst_ptr);
                     set_operand_value(LLVMBuildAdd(jcontext->builder, rsi_val, LLVMConstInt(i64, 1, 0), "rsi_inc"), jcontext, zcontext, &fake_rsi, runtime_address);
                     set_operand_value(LLVMBuildAdd(jcontext->builder, rdi_val, LLVMConstInt(i64, 1, 0), "rdi_inc"), jcontext, zcontext, &fake_rdi, runtime_address);
@@ -484,7 +484,7 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
                 LLVMValueRef rdi_val = get_operand_value(jcontext, zcontext, &fake_rdi, runtime_address, phnum, mem_image, base_vaddr);
                 LLVMValueRef rcx_val = get_operand_value(jcontext, zcontext, &fake_rcx, runtime_address, phnum, mem_image, base_vaddr);
                 
-                LLVMTypeRef i8ptr = LLVMPointerType(LLVMInt8Type(), 0);
+                LLVMTypeRef i8ptr = LLVMPointerType(i8, 0);
                 
                 if (zcontext->instruction.attributes & ZYDIS_ATTRIB_HAS_REPE) {
                     LLVMTypeRef memcmp_type = LLVMFunctionType(LLVMInt32Type(), (LLVMTypeRef[]){ i8ptr, i8ptr, i64 }, 3, 0);

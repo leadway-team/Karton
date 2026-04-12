@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
     }
     size_t file_size = st.st_size;
     
-    uint8_t* raw_bin = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    uint8_t* raw_bin = mmap(NULL, file_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
     if (raw_bin == MAP_FAILED) {
         printf("mmap error, internal error code 2.\n"); 
         return 2;

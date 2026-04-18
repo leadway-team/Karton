@@ -1,12 +1,12 @@
 {
-  "0":  { "native": 63,  "argc": 3, "args": ["rdi", "rsi", "rdx"] },
-  "1":  { "native": 64,  "argc": 3, "args": ["rdi", "rsi", "rdx"] },
-  "2":  { "native": 56,  "argc": 4, "args": ["-100", "rdi", "rsi", "rdx"] },
+  "0":  { "native": 63,  "argc": 3, "args": ["rdi", "*rsi", "rdx"] },
+  "1":  { "native": 64,  "argc": 3, "args": ["rdi", "*rsi", "rdx"] },
+  "2":  { "native": 56,  "argc": 4, "args": ["-100", "*rdi", "rsi", "rdx"] },
   "3":  { "native": 57,  "argc": 1, "args": ["rdi"] },
   "41": { "native": 198, "argc": 3, "args": ["rdi", "rsi", "rdx"] },
   "43": { "native": 202, "argc": 3, "args": ["rdi", "rsi", "rdx"] },
-  "49": { "native": 200, "argc": 3, "args": ["rdi", "rsi", "rdx"] },
+  "49": { "native": 200, "argc": 3, "args": ["rdi", "*rsi", "rdx"] },
   "50": { "native": 201, "argc": 2, "args": ["rdi", "rsi"] },
   "60": { "native": 93,  "argc": 1, "args": ["rdi"] },
-  "201": { "native": 169, "argc": 2, "args": ["rdi", "rdi"] }
+  "201": { "native": 169, "argc": 2, "args": ["*rdi", "*rsi"] }
 }

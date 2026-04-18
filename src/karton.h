@@ -56,8 +56,6 @@ typedef struct {
     LLVMValueRef int80_handler;
     LLVMTypeRef func_type;
     LLVMOrcThreadSafeContextRef TSCtx;
-    uint8_t  *mem_image;
-    uint64_t  base_vaddr;
 } JITCtx;
 
 typedef struct {
@@ -71,6 +69,8 @@ extern LLVMTypeRef i8;
 extern GElf_Phdr* phdrs;
 extern CPUState cpu;
 extern Cache block_cache[65536];
+extern uint8_t  *mem_image;
+extern uint64_t  base_vaddr;
 
 /* see exec.c */
 extern struct json_object *jsoncalls;
@@ -83,9 +83,9 @@ void run_ir(JITCtx *jcontext, char* func_name, Cache *cache_entry);
 
 /* see gen.c */
 GElf_Phdr* find_phdr(ZyanUSize phnum, uint64_t addr);
-void* access_quest(uint64_t guest_addr, uint8_t *mem_image, uint64_t base_vaddr);
+void* access_quest(uint64_t guest_addr);
 LLVMValueRef get_reg_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_type, int reg_idx);
 int get_register_index(ZydisRegister reg);
-LLVMValueRef get_operand_value(JITCtx *jcontext, ZydisCtx *zcontext, ZydisDecodedOperand *operand, int64_t runtime_address, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_vaddr);
+LLVMValueRef get_operand_value(JITCtx *jcontext, ZydisCtx *zcontext, ZydisDecodedOperand *operand, int64_t runtime_address, ZyanUSize phnum);
 void set_operand_value(LLVMValueRef value, JITCtx *jcontext, ZydisCtx *zcontext, ZydisDecodedOperand *operand, int64_t runtime_address);
-void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_vaddr, ZydisCtx *zcontext, JITCtx *jcontext);
+void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jcontext);

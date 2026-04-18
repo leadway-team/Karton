@@ -37,6 +37,13 @@ void helper_syscall(CPUState *cpu) {
         for (int i = 0; i < n_args; i++) {
             struct json_object *arg = json_object_array_get_idx(args, i);
             const char* string_arg = json_object_get_string(arg);
+            
+            bool ptr = 0;
+            if (string_arg[0] == '*') {
+                string_arg++;
+                ptr = 1;
+            }
+            
                    if (strcmp("rdx", string_arg) == 0) {
                 sargs[i] = rdx;
             } else if (strcmp("rsi", string_arg) == 0) {
@@ -51,6 +58,10 @@ void helper_syscall(CPUState *cpu) {
                 sargs[i] = r10;
             } else {
                 sargs[i] = (uint64_t)strtoull(string_arg, NULL, 10);
+            }
+            
+            if (ptr && sargs[i] != 0) {
+                sargs[i] = (uint64_t)access_quest(sargs[i]);
             }
         }
         cpu->gprs[0] = syscall(rax, sargs[0], sargs[1], sargs[2], sargs[3], sargs[4], sargs[5]);
@@ -95,6 +106,13 @@ void helper_int80(CPUState *cpu) {
         for (int i = 0; i < n_args; i++) {
             struct json_object *arg = json_object_array_get_idx(args, i);
             const char* string_arg = json_object_get_string(arg);
+            
+            bool ptr = 0;
+            if (string_arg[0] == '*') {
+                string_arg++;
+                ptr = 1;
+            }
+            
                    if (strcmp("ebx", string_arg) == 0) {
                 sargs[i] = ebx;
             } else if (strcmp("ecx", string_arg) == 0) {
@@ -109,6 +127,10 @@ void helper_int80(CPUState *cpu) {
                 sargs[i] = ebp;
             } else {
                 sargs[i] = (uint64_t)strtoull(string_arg, NULL, 10);
+            }
+            
+            if (ptr && sargs[i] != 0) {
+                sargs[i] = (uint64_t)access_quest(sargs[i]);
             }
         }
         cpu->gprs[0] = syscall(eax, sargs[0], sargs[1], sargs[2], sargs[3], sargs[4], sargs[5]);

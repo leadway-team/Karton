@@ -5,6 +5,8 @@ LLVMTypeRef i8;
 GElf_Phdr* phdrs;
 CPUState cpu = {0};
 Cache block_cache[65536] = {0};
+uint8_t  *mem_image;
+uint64_t  base_vaddr;
 
 int main(int argc, char** argv) {
     printf("Karton Emu ; 04.2026\n");
@@ -126,7 +128,8 @@ int main(int argc, char** argv) {
     ZyanUSize phnum;
     elf_getphdrnum(e, &phnum);
     
-    uint64_t base_vaddr = UINT64_MAX, top_vaddr = 0;
+    base_vaddr = UINT64_MAX;
+    uint64_t top_vaddr = 0;
     for (ZyanUSize i = 0; i < phnum; i++) {
         GElf_Phdr phdr;
         gelf_getphdr(e, i, &phdr);
@@ -135,7 +138,7 @@ int main(int argc, char** argv) {
         if (phdr.p_vaddr + phdr.p_memsz > top_vaddr) top_vaddr = phdr.p_vaddr + phdr.p_memsz;
     }
     
-    uint8_t *mem_image = calloc(1, top_vaddr - base_vaddr);
+    mem_image = calloc(1, top_vaddr - base_vaddr);
     if (!mem_image) {
         printf("calloc error, internal error code 2.\n");
         return 2;
@@ -215,14 +218,11 @@ int main(int argc, char** argv) {
         return 6;
     }
     
-    jcontext.mem_image = mem_image;
-    jcontext.base_vaddr = base_vaddr;
-    
     ZydisCtx zcontext;
     ZydisDecoderInit(&zcontext.decoder, mode, width);
     ZydisFormatterInit(&zcontext.formatter, ZYDIS_FORMATTER_STYLE_INTEL);
     
-    cpu.rip = (uint64_t)access_quest(entry_point, mem_image, base_vaddr);
+    cpu.rip = entry_point;
     
     jcontext.TSCtx = LLVMOrcCreateNewThreadSafeContext();
     
@@ -242,16 +242,14 @@ int main(int argc, char** argv) {
             char func_name[64];
             snprintf(func_name, sizeof(func_name), "block_%lx", cpu.rip);
             
-            uint64_t guest_rip = cpu.rip - (uint64_t)mem_image + base_vaddr;
-            GElf_Phdr *cur_phdr = find_phdr(phnum, guest_rip);
+            GElf_Phdr *cur_phdr = find_phdr(phnum, cpu.rip);
             if (!cur_phdr) {
-                printf("PANIC: rip 0x%lx (guest 0x%lx) outside any PT_LOAD segment\n",
-                       cpu.rip, guest_rip);
+                printf("PANIC: rip 0x%lx outside any PT_LOAD segment\n", cpu.rip);
                 break;
             }
             
             init_llir(&jcontext, func_name);
-            gen_ir(cur_phdr, phnum, mem_image, base_vaddr, &zcontext, &jcontext);
+            gen_ir(cur_phdr, phnum, &zcontext, &jcontext);
             run_ir(&jcontext, func_name, entry);
         }
         

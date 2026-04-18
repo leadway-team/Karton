@@ -9,7 +9,7 @@ GElf_Phdr* find_phdr(ZyanUSize phnum, uint64_t addr) {
     return ZYAN_NULL;
 }
 
-void* access_quest(uint64_t guest_addr, uint8_t *mem_image, uint64_t base_vaddr) {
+void* access_quest(uint64_t guest_addr) {
     return (void*)(mem_image + guest_addr - base_vaddr);
 }
 
@@ -83,15 +83,10 @@ LLVMValueRef compute_mem_addr(JITCtx *jcontext, ZydisDecodedOperand *operand, Zy
     return addr;
 }
 
-LLVMValueRef get_operand_value(JITCtx *jcontext, ZydisCtx *zcontext, ZydisDecodedOperand *operand, int64_t runtime_address, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_vaddr) {
+LLVMValueRef get_operand_value(JITCtx *jcontext, ZydisCtx *zcontext, ZydisDecodedOperand *operand, int64_t runtime_address, ZyanUSize phnum) {
     switch (operand->type) {
         case ZYDIS_OPERAND_TYPE_IMMEDIATE: {
-            uint64_t tmp = operand->imm.value.s;
-            GElf_Phdr *phdr = find_phdr(phnum, tmp);
-            if (phdr != NULL) {
-                tmp = (uint64_t)access_quest(tmp, mem_image, base_vaddr);
-            }
-            return LLVMConstInt(i64, tmp, 0);
+            return LLVMConstInt(i64, operand->imm.value.s, 0);
         }
         
         case ZYDIS_OPERAND_TYPE_MEMORY: {
@@ -105,7 +100,9 @@ LLVMValueRef get_operand_value(JITCtx *jcontext, ZydisCtx *zcontext, ZydisDecode
                 default: mem_type = i64;             break;
             }
             
-            LLVMValueRef ptr = LLVMBuildIntToPtr(jcontext->builder, addr,
+            LLVMValueRef host_addr = LLVMBuildSub(jcontext->builder, addr, LLVMConstInt(i64, base_vaddr, 0), "sub_base");
+            host_addr = LLVMBuildAdd(jcontext->builder, host_addr, LLVMConstInt(i64, (uint64_t)mem_image, 0), "add_image");
+            LLVMValueRef ptr = LLVMBuildIntToPtr(jcontext->builder, host_addr,
                                    LLVMPointerType(mem_type, 0), "mem_ptr");
             LLVMValueRef val = LLVMBuildLoad2(jcontext->builder, mem_type, ptr, "mem_val");
             
@@ -156,7 +153,9 @@ void set_operand_value(LLVMValueRef value, JITCtx *jcontext, ZydisCtx *zcontext,
                 ? LLVMBuildTrunc(jcontext->builder, value, mem_type, "trunc")
                 : value;
             
-            LLVMValueRef ptr = LLVMBuildIntToPtr(jcontext->builder, addr,
+            LLVMValueRef host_addr = LLVMBuildSub(jcontext->builder, addr, LLVMConstInt(i64, base_vaddr, 0), "sub_base");
+            host_addr = LLVMBuildAdd(jcontext->builder, host_addr, LLVMConstInt(i64, (uint64_t)mem_image, 0), "add_image");
+            LLVMValueRef ptr = LLVMBuildIntToPtr(jcontext->builder, host_addr,
                                    LLVMPointerType(mem_type, 0), "mem_ptr");
             LLVMBuildStore(jcontext->builder, store_val, ptr);
             break;
@@ -167,11 +166,12 @@ void set_operand_value(LLVMValueRef value, JITCtx *jcontext, ZydisCtx *zcontext,
     }
 }
 
-void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_vaddr, ZydisCtx *zcontext, JITCtx *jcontext) {
+void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jcontext) {
     ZyanU64 offset = 0;
     ZyanU64 runtime_address = cpu.rip;
     
-    while (offset < phdr->p_filesz && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&zcontext->decoder, (ZyanU8*)runtime_address, phdr->p_filesz, &zcontext->instruction, zcontext->operands))) {
+    while (offset < phdr->p_filesz && ZYAN_SUCCESS(ZydisDecoderDecodeFull(&zcontext->decoder, (ZyanU8*)access_quest(runtime_address), 
+                                                                          phdr->p_filesz, &zcontext->instruction, zcontext->operands))) {
         #ifdef DEBUG
         printf("%016" PRIX64 "  ", runtime_address);
         char buffer[256];
@@ -182,9 +182,9 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
         LLVMValueRef value;
         
         if (zcontext->instruction.operand_count_visible == 1) {
-            value = get_operand_value(jcontext, zcontext, &zcontext->operands[0], runtime_address, phnum, mem_image, base_vaddr);
+            value = get_operand_value(jcontext, zcontext, &zcontext->operands[0], runtime_address, phnum);
         } else if (zcontext->instruction.operand_count_visible >= 2) {
-            value = get_operand_value(jcontext, zcontext, &zcontext->operands[1], runtime_address, phnum, mem_image, base_vaddr);
+            value = get_operand_value(jcontext, zcontext, &zcontext->operands[1], runtime_address, phnum);
         }
         
         switch (zcontext->instruction.mnemonic) {
@@ -265,7 +265,7 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
                 uint64_t old_addr = runtime_address + zcontext->instruction.length;
                 
                 ZydisDecodedOperand fake_rcx = {0}; fake_rcx.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rcx.reg.value = ZYDIS_REGISTER_RCX;
-                LLVMValueRef rcx = get_operand_value(jcontext, zcontext, &fake_rcx, runtime_address, phnum, mem_image, base_vaddr);
+                LLVMValueRef rcx = get_operand_value(jcontext, zcontext, &fake_rcx, runtime_address, phnum);
                 LLVMValueRef rcx_dec = LLVMBuildSub(jcontext->builder, rcx, LLVMConstInt(i64, 1, 0), "loop_dec");
                 set_operand_value(rcx_dec, jcontext, zcontext, &fake_rcx, runtime_address);
                 
@@ -374,8 +374,8 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
                 LLVMTypeRef i128 = LLVMInt128Type();
                 ZydisDecodedOperand fake_rax = {0}; fake_rax.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rax.reg.value = ZYDIS_REGISTER_RAX;
                 ZydisDecodedOperand fake_rdx = {0}; fake_rdx.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rdx.reg.value = ZYDIS_REGISTER_RDX;
-                LLVMValueRef rax = get_operand_value(jcontext, zcontext, &fake_rax, runtime_address, phnum, mem_image, base_vaddr);
-                LLVMValueRef rdx = get_operand_value(jcontext, zcontext, &fake_rdx, runtime_address, phnum, mem_image, base_vaddr);
+                LLVMValueRef rax = get_operand_value(jcontext, zcontext, &fake_rax, runtime_address, phnum);
+                LLVMValueRef rdx = get_operand_value(jcontext, zcontext, &fake_rdx, runtime_address, phnum);
                 
                 LLVMValueRef rdx128    = LLVMBuildZExt(jcontext->builder, rdx,   i128, "");
                 LLVMValueRef rax128    = LLVMBuildZExt(jcontext->builder, rax,   i128, "");
@@ -411,7 +411,7 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
             }
             
             case ZYDIS_MNEMONIC_CMP: {
-                LLVMValueRef lhs    = get_operand_value(jcontext, zcontext, &zcontext->operands[0], runtime_address, phnum, mem_image, base_vaddr);
+                LLVMValueRef lhs    = get_operand_value(jcontext, zcontext, &zcontext->operands[0], runtime_address, phnum);
                 LLVMValueRef result = LLVMBuildSub(jcontext->builder, lhs, value, "cmp_result");
                 
                 LLVMValueRef is_eq  = LLVMBuildICmp(jcontext->builder, LLVMIntEQ,  lhs, value, "zf_cmp");
@@ -438,7 +438,7 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
             }
             
             case ZYDIS_MNEMONIC_TEST: {
-                LLVMValueRef lhs    = get_operand_value(jcontext, zcontext, &zcontext->operands[0], runtime_address, phnum, mem_image, base_vaddr);
+                LLVMValueRef lhs    = get_operand_value(jcontext, zcontext, &zcontext->operands[0], runtime_address, phnum);
                 LLVMValueRef result = LLVMBuildAnd(jcontext->builder, lhs, value, "test_result");
                 
                 LLVMValueRef is_zero = LLVMBuildICmp(jcontext->builder, LLVMIntEQ,  result, LLVMConstInt(i64, 0, 0), "zf_test");
@@ -466,19 +466,24 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
                     get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 6));
                 break;
             }
-            
+
             case ZYDIS_MNEMONIC_MOVSB: {
                 ZydisDecodedOperand fake_rsi = {0}; fake_rsi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rsi.reg.value = ZYDIS_REGISTER_RSI;
                 ZydisDecodedOperand fake_rdi = {0}; fake_rdi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rdi.reg.value = ZYDIS_REGISTER_RDI;
                 ZydisDecodedOperand fake_rcx = {0}; fake_rcx.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rcx.reg.value = ZYDIS_REGISTER_RCX;
                 
-                LLVMValueRef rsi_val = get_operand_value(jcontext, zcontext, &fake_rsi, runtime_address, phnum, mem_image, base_vaddr);
-                LLVMValueRef rdi_val = get_operand_value(jcontext, zcontext, &fake_rdi, runtime_address, phnum, mem_image, base_vaddr);
-                LLVMValueRef rcx_val = get_operand_value(jcontext, zcontext, &fake_rcx, runtime_address, phnum, mem_image, base_vaddr);
+                LLVMValueRef rsi_val = get_operand_value(jcontext, zcontext, &fake_rsi, runtime_address, phnum);
+                LLVMValueRef rdi_val = get_operand_value(jcontext, zcontext, &fake_rdi, runtime_address, phnum);
+                LLVMValueRef rcx_val = get_operand_value(jcontext, zcontext, &fake_rcx, runtime_address, phnum);
                 
                 LLVMTypeRef i8ptr = LLVMPointerType(i8, 0);
-                LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, rsi_val, i8ptr, "src_ptr");
-                LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, rdi_val, i8ptr, "dst_ptr");
+                
+                #define G2H(val) LLVMBuildAdd(jcontext->builder, \
+                    LLVMBuildSub(jcontext->builder, (val), LLVMConstInt(i64, base_vaddr, 0), "sub_base"), \
+                    LLVMConstInt(i64, (uint64_t)mem_image, 0), "add_image")
+                
+                LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, G2H(rsi_val), i8ptr, "src_ptr");
+                LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, G2H(rdi_val), i8ptr, "dst_ptr");
                 
                 if (zcontext->instruction.attributes & ZYDIS_ATTRIB_HAS_REP) {
                     LLVMBuildMemMove(jcontext->builder, dst_ptr, 1, src_ptr, 1, rcx_val);
@@ -491,19 +496,25 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
                     set_operand_value(LLVMBuildAdd(jcontext->builder, rsi_val, LLVMConstInt(i64, 1, 0), "rsi_inc"), jcontext, zcontext, &fake_rsi, runtime_address);
                     set_operand_value(LLVMBuildAdd(jcontext->builder, rdi_val, LLVMConstInt(i64, 1, 0), "rdi_inc"), jcontext, zcontext, &fake_rdi, runtime_address);
                 }
+                
+                #undef G2H
                 break;
             }
-            
+
             case ZYDIS_MNEMONIC_CMPSB: {
                 ZydisDecodedOperand fake_rsi = {0}; fake_rsi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rsi.reg.value = ZYDIS_REGISTER_RSI;
                 ZydisDecodedOperand fake_rdi = {0}; fake_rdi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rdi.reg.value = ZYDIS_REGISTER_RDI;
                 ZydisDecodedOperand fake_rcx = {0}; fake_rcx.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rcx.reg.value = ZYDIS_REGISTER_RCX;
                 
-                LLVMValueRef rsi_val = get_operand_value(jcontext, zcontext, &fake_rsi, runtime_address, phnum, mem_image, base_vaddr);
-                LLVMValueRef rdi_val = get_operand_value(jcontext, zcontext, &fake_rdi, runtime_address, phnum, mem_image, base_vaddr);
-                LLVMValueRef rcx_val = get_operand_value(jcontext, zcontext, &fake_rcx, runtime_address, phnum, mem_image, base_vaddr);
+                LLVMValueRef rsi_val = get_operand_value(jcontext, zcontext, &fake_rsi, runtime_address, phnum);
+                LLVMValueRef rdi_val = get_operand_value(jcontext, zcontext, &fake_rdi, runtime_address, phnum);
+                LLVMValueRef rcx_val = get_operand_value(jcontext, zcontext, &fake_rcx, runtime_address, phnum);
                 
                 LLVMTypeRef i8ptr = LLVMPointerType(i8, 0);
+                
+                #define G2H(val) LLVMBuildAdd(jcontext->builder, \
+                    LLVMBuildSub(jcontext->builder, (val), LLVMConstInt(i64, base_vaddr, 0), "sub_base"), \
+                    LLVMConstInt(i64, (uint64_t)mem_image, 0), "add_image")
                 
                 if (zcontext->instruction.attributes & ZYDIS_ATTRIB_HAS_REPE) {
                     LLVMTypeRef memcmp_type = LLVMFunctionType(LLVMInt32Type(), (LLVMTypeRef[]){ i8ptr, i8ptr, i64 }, 3, 0);
@@ -511,21 +522,22 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, uint8_t *mem_image, uint64_t base_
                     if (!memcmp_fn)
                         memcmp_fn = LLVMAddFunction(jcontext->mod, "memcmp", memcmp_type);
                     
-                    LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, rsi_val, i8ptr, "cmp_src");
-                    LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, rdi_val, i8ptr, "cmp_dst");
+                    LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, G2H(rsi_val), i8ptr, "cmp_src");
+                    LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, G2H(rdi_val), i8ptr, "cmp_dst");
                     
                     LLVMValueRef result = LLVMBuildCall2(jcontext->builder, memcmp_type, memcmp_fn,
                         (LLVMValueRef[]){ src_ptr, dst_ptr, rcx_val }, 3, "memcmp_result");
                     
                     LLVMValueRef is_eq  = LLVMBuildICmp(jcontext->builder, LLVMIntEQ, result, LLVMConstInt(LLVMInt32Type(), 0, 0), "cmpsb_eq");
-                    LLVMValueRef zf_val = LLVMBuildZExt(jcontext->builder, is_eq, i8, "zf_i8");
-                    LLVMBuildStore(jcontext->builder, zf_val,
+                    LLVMBuildStore(jcontext->builder, LLVMBuildZExt(jcontext->builder, is_eq, i8, "zf_i8"),
                         get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 2));
                     
                     set_operand_value(LLVMBuildAdd(jcontext->builder, rsi_val, rcx_val, "rsi_new"), jcontext, zcontext, &fake_rsi, runtime_address);
                     set_operand_value(LLVMBuildAdd(jcontext->builder, rdi_val, rcx_val, "rdi_new"), jcontext, zcontext, &fake_rdi, runtime_address);
-                    set_operand_value(LLVMConstInt(i64, 0, 0),                                      jcontext, zcontext, &fake_rcx, runtime_address);
+                    set_operand_value(LLVMConstInt(i64, 0, 0), jcontext, zcontext, &fake_rcx, runtime_address);
                 }
+                
+                #undef G2H
                 break;
             }
             

@@ -188,8 +188,9 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
         }
         
         switch (zcontext->instruction.mnemonic) {
+            case ZYDIS_MNEMONIC_NOP:
             case ZYDIS_MNEMONIC_ENDBR64: {
-                break; // security is for weak peoples, bozo
+                break;
             }
             
             case ZYDIS_MNEMONIC_JMP: {
@@ -251,6 +252,54 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 LLVMValueRef cond = LLVMBuildICmp(jcontext->builder, LLVMIntNE, sf, of, "jl_cond");
                 LLVMValueRef new_rip = LLVMBuildSelect(jcontext->builder, cond,
                     LLVMConstInt(i64, new_addr, 0), LLVMConstInt(i64, old_addr, 0), "jl_rip");
+                
+                ZydisDecodedOperand fake_rip = {0}; fake_rip.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rip.reg.value = ZYDIS_REGISTER_RIP;
+                set_operand_value(new_rip, jcontext, zcontext, &fake_rip, runtime_address);
+                
+                offset = phdr->p_filesz; // break "while"
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_JBE: {
+                uint64_t new_addr;
+                ZydisCalcAbsoluteAddress(&zcontext->instruction, &zcontext->operands[0], runtime_address, &new_addr);
+                uint64_t old_addr = runtime_address + zcontext->instruction.length;
+                
+                LLVMValueRef zf = LLVMBuildLoad2(jcontext->builder, i8,
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 2), "zf");
+                LLVMValueRef cf = LLVMBuildLoad2(jcontext->builder, i8,
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 4), "cf");
+                LLVMValueRef cond = LLVMBuildOr(jcontext->builder, 
+                              LLVMBuildICmp(jcontext->builder, LLVMIntNE, zf, LLVMConstInt(i8, 0, 0), "zf_cmp"),
+                              LLVMBuildICmp(jcontext->builder, LLVMIntNE, cf, LLVMConstInt(i8, 0, 0), "cf_cmp"),
+                              "jbe_cond"
+                );
+                LLVMValueRef new_rip = LLVMBuildSelect(jcontext->builder, cond,
+                    LLVMConstInt(i64, new_addr, 0), LLVMConstInt(i64, old_addr, 0), "jbe_rip");
+                
+                ZydisDecodedOperand fake_rip = {0}; fake_rip.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rip.reg.value = ZYDIS_REGISTER_RIP;
+                set_operand_value(new_rip, jcontext, zcontext, &fake_rip, runtime_address);
+                
+                offset = phdr->p_filesz; // break "while"
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_JNBE: {
+                uint64_t new_addr;
+                ZydisCalcAbsoluteAddress(&zcontext->instruction, &zcontext->operands[0], runtime_address, &new_addr);
+                uint64_t old_addr = runtime_address + zcontext->instruction.length;
+                
+                LLVMValueRef zf = LLVMBuildLoad2(jcontext->builder, i8,
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 2), "zf");
+                LLVMValueRef cf = LLVMBuildLoad2(jcontext->builder, i8,
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 4), "cf");
+                LLVMValueRef cond = LLVMBuildAnd(jcontext->builder, 
+                              LLVMBuildICmp(jcontext->builder, LLVMIntEQ, zf, LLVMConstInt(i8, 0, 0), "zf_cmp"),
+                              LLVMBuildICmp(jcontext->builder, LLVMIntEQ, cf, LLVMConstInt(i8, 0, 0), "cf_cmp"),
+                              "jnbe_cond"
+                );
+                LLVMValueRef new_rip = LLVMBuildSelect(jcontext->builder, cond,
+                    LLVMConstInt(i64, new_addr, 0), LLVMConstInt(i64, old_addr, 0), "jnbe_rip");
                 
                 ZydisDecodedOperand fake_rip = {0}; fake_rip.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rip.reg.value = ZYDIS_REGISTER_RIP;
                 set_operand_value(new_rip, jcontext, zcontext, &fake_rip, runtime_address);

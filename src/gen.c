@@ -308,6 +308,64 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 break;
             }
             
+            case ZYDIS_MNEMONIC_JB: {
+                uint64_t new_addr;
+                ZydisCalcAbsoluteAddress(&zcontext->instruction, &zcontext->operands[0], runtime_address, &new_addr);
+                uint64_t old_addr = runtime_address + zcontext->instruction.length;
+                
+                LLVMValueRef cf = LLVMBuildLoad2(jcontext->builder, i8,
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 4), "cf");
+                LLVMValueRef cond = LLVMBuildICmp(jcontext->builder, LLVMIntNE, cf, LLVMConstInt(i8, 0, 0), "cf_cmp");
+                LLVMValueRef new_rip = LLVMBuildSelect(jcontext->builder, cond,
+                    LLVMConstInt(i64, new_addr, 0), LLVMConstInt(i64, old_addr, 0), "jb_rip");
+                
+                ZydisDecodedOperand fake_rip = {0}; fake_rip.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rip.reg.value = ZYDIS_REGISTER_RIP;
+                set_operand_value(new_rip, jcontext, zcontext, &fake_rip, runtime_address);
+                
+                offset = phdr->p_filesz; // break "while"
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_SHR: {
+                LLVMValueRef dst = get_operand_value(jcontext, zcontext, &zcontext->operands[0], runtime_address, phnum);
+                LLVMValueRef cnt = value;
+                
+                if (LLVMGetIntTypeWidth(LLVMTypeOf(cnt)) < LLVMGetIntTypeWidth(LLVMTypeOf(dst))) {
+                    cnt = LLVMBuildZExt(jcontext->builder, cnt, LLVMTypeOf(dst), "shr_cnt");
+                } else if (LLVMGetIntTypeWidth(LLVMTypeOf(cnt)) > LLVMGetIntTypeWidth(LLVMTypeOf(dst))) {
+                    cnt = LLVMBuildTrunc(jcontext->builder, cnt, LLVMTypeOf(dst), "shr_cnt");
+                }
+                
+                LLVMValueRef result = LLVMBuildLShr(jcontext->builder, dst, cnt, "shr_res");
+                set_operand_value(result, jcontext, zcontext, &zcontext->operands[0], runtime_address);
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_NEG: {
+                LLVMValueRef result = LLVMBuildNeg(jcontext->builder, value, "neg_res");
+                set_operand_value(result, jcontext, zcontext, &zcontext->operands[0], runtime_address);
+                
+                LLVMValueRef zero = LLVMConstInt(LLVMTypeOf(value), 0, 0);
+                LLVMValueRef cf_val = LLVMBuildZExt(jcontext->builder,
+                    LLVMBuildICmp(jcontext->builder, LLVMIntNE, value, zero, "neg_cf_cmp"),
+                    i8, "neg_cf");
+                LLVMBuildStore(jcontext->builder, cf_val,
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 4));
+                
+                LLVMValueRef zf_val = LLVMBuildZExt(jcontext->builder,
+                    LLVMBuildICmp(jcontext->builder, LLVMIntEQ, result, zero, "neg_zf_cmp"),
+                    i8, "neg_zf");
+                LLVMBuildStore(jcontext->builder, zf_val,
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 2));
+                
+                LLVMValueRef sf_val = LLVMBuildZExt(jcontext->builder,
+                    LLVMBuildICmp(jcontext->builder, LLVMIntSLT, result,
+                        LLVMConstInt(LLVMTypeOf(result), 0, 0), "neg_sf_cmp"), i8, "neg_sf");
+                LLVMBuildStore(jcontext->builder, sf_val,
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 3));
+                break;
+            }
+            
             case ZYDIS_MNEMONIC_LOOP: {
                 uint64_t new_addr;
                 ZydisCalcAbsoluteAddress(&zcontext->instruction, &zcontext->operands[0], runtime_address, &new_addr);

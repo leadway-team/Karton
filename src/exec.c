@@ -66,6 +66,26 @@ void helper_syscall(CPUState *cpu) {
         }
         cpu->gprs[0] = syscall(rax, sargs[0], sargs[1], sargs[2], sargs[3], sargs[4], sargs[5]);
     } else {
+        //TODO: if -> switch case
+        if (rax == 158) { // arch_prctl
+            uint64_t code = cpu->gprs[7];
+            uint64_t addr = cpu->gprs[6];
+            switch (code) {
+                case 0x1002:
+                    cpu->fs_base = addr;
+                    cpu->gprs[0] = 0;
+                    break;
+                case 0x1003:
+                    *(uint64_t*)access_quest(addr) = cpu->fs_base;
+                    cpu->gprs[0] = 0;
+                    break;
+                default:
+                    cpu->gprs[0] = -22;
+                    break;
+            }
+            return;
+        }
+        
         printf("JSON file doesn't contain required syscall! RAX: %lu\n", rax);
         printf("Internal error code 7\n");
         exit(7);

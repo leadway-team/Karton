@@ -180,8 +180,8 @@ int main(int argc, char** argv) {
     i8  = LLVMInt8Type();
     
     LLVMTypeRef array_type = LLVMArrayType(i64, 16);
-    LLVMTypeRef fields[]   = { array_type, i64, i8, i8, i8, i8, i8 };
-    LLVMStructSetBody(jcontext.cpu_struct_type, fields, 7, 0);
+    LLVMTypeRef fields[]   = { array_type, i64, i8, i8, i8, i8, i8, i64 };
+    LLVMStructSetBody(jcontext.cpu_struct_type, fields, 8, 0);
     jcontext.cpu_ptr_type = LLVMPointerType(jcontext.cpu_struct_type, 0);
     
     LLVMTypeRef param_types[] = { jcontext.cpu_ptr_type };

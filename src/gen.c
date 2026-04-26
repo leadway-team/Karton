@@ -676,7 +676,65 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 
                 break;
             }
-
+            
+            case ZYDIS_MNEMONIC_STOSQ: {
+                ZydisDecodedOperand fake_rdi = {0}; fake_rdi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rdi.reg.value = ZYDIS_REGISTER_RDI;
+                ZydisDecodedOperand fake_rax = {0}; fake_rax.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rax.reg.value = ZYDIS_REGISTER_RAX;
+                ZydisDecodedOperand fake_rcx = {0}; fake_rcx.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rcx.reg.value = ZYDIS_REGISTER_RCX;
+                
+                LLVMValueRef rdi_val = get_operand_value(jcontext, zcontext, &fake_rdi, runtime_address, phnum);
+                LLVMValueRef rax_val = get_operand_value(jcontext, zcontext, &fake_rax, runtime_address, phnum);
+                LLVMValueRef rcx_val = get_operand_value(jcontext, zcontext, &fake_rcx, runtime_address, phnum);
+                LLVMTypeRef  i64ptr  = LLVMPointerType(i64, 0);
+                
+                LLVMValueRef host_rdi = GUEST_TO_HOST(jcontext->builder, rdi_val);
+                LLVMValueRef base_ptr = LLVMBuildIntToPtr(jcontext->builder, host_rdi, i64ptr, "stosq_ptr");
+                
+                if (zcontext->instruction.attributes & ZYDIS_ATTRIB_HAS_REP) {
+                    LLVMValueRef func = LLVMGetBasicBlockParent(LLVMGetInsertBlock(jcontext->builder));
+                    LLVMBasicBlockRef pre_bb = LLVMGetInsertBlock(jcontext->builder);
+                    
+                    LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlock(func, "stosq_loop");
+                    LLVMBasicBlockRef exit_bb = LLVMAppendBasicBlock(func, "stosq_exit");
+                    
+                    LLVMValueRef entry_cond = LLVMBuildICmp(jcontext->builder, LLVMIntNE,
+                        rcx_val, LLVMConstInt(i64, 0, 0), "stosq_ne");
+                    LLVMBuildCondBr(jcontext->builder, entry_cond, loop_bb, exit_bb);
+                    
+                    LLVMPositionBuilderAtEnd(jcontext->builder, loop_bb);
+                    LLVMValueRef idx_phi = LLVMBuildPhi(jcontext->builder, i64, "stosq_idx");
+                    
+                    LLVMValueRef elem_ptr = LLVMBuildGEP2(jcontext->builder, i64, base_ptr,
+                        &idx_phi, 1, "stosq_elem");
+                    LLVMBuildStore(jcontext->builder, rax_val, elem_ptr);
+                    
+                    LLVMValueRef idx_next = LLVMBuildAdd(jcontext->builder, idx_phi,
+                        LLVMConstInt(i64, 1, 0), "stosq_next");
+                    LLVMValueRef loop_cond = LLVMBuildICmp(jcontext->builder, LLVMIntNE,
+                        idx_next, rcx_val, "stosq_cond");
+                    LLVMBuildCondBr(jcontext->builder, loop_cond, loop_bb, exit_bb);
+                    
+                    LLVMBasicBlockRef loop_back = LLVMGetInsertBlock(jcontext->builder);
+                    LLVMValueRef phi_vals[] = { LLVMConstInt(i64, 0, 0), idx_next };
+                    LLVMBasicBlockRef phi_bbs[] = { pre_bb, loop_back };
+                    LLVMAddIncoming(idx_phi, phi_vals, phi_bbs, 2);
+                    
+                    LLVMPositionBuilderAtEnd(jcontext->builder, exit_bb);
+                    
+                    LLVMValueRef byte_count = LLVMBuildMul(jcontext->builder, rcx_val,
+                        LLVMConstInt(i64, 8, 0), "stosq_bytes");
+                    set_operand_value(LLVMBuildAdd(jcontext->builder, rdi_val, byte_count, "rdi_new"),
+                        jcontext, zcontext, &fake_rdi, runtime_address);
+                    set_operand_value(LLVMConstInt(i64, 0, 0),
+                        jcontext, zcontext, &fake_rcx, runtime_address);
+                } else {
+                    LLVMBuildStore(jcontext->builder, rax_val, base_ptr);
+                    set_operand_value(LLVMBuildAdd(jcontext->builder, rdi_val, LLVMConstInt(i64, 8, 0), "rdi_inc"),
+                                                                   jcontext, zcontext, &fake_rdi, runtime_address);
+                }
+                break;
+            }
+            
             case ZYDIS_MNEMONIC_CMPSB: {
                 ZydisDecodedOperand fake_rsi = {0}; fake_rsi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rsi.reg.value = ZYDIS_REGISTER_RSI;
                 ZydisDecodedOperand fake_rdi = {0}; fake_rdi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rdi.reg.value = ZYDIS_REGISTER_RDI;

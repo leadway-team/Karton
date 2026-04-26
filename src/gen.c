@@ -436,23 +436,42 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
             }
             
             case ZYDIS_MNEMONIC_MOVZX: {
-		 uint64_t mask;
+                 uint64_t mask;
 		 switch (zcontext->operands[1].size) {
-		    case 8:  mask = 0xFF;   break;
-		    case 16: mask = 0xFFFF; break;
-		    default: mask = 0xFFFFFFFF; break;
-		 }
-		 
-		 LLVMValueRef result = LLVMBuildAnd(jcontext->builder, value,
-			LLVMConstInt(i64, mask, 0), "movzx_res");
-		 set_operand_value(result, jcontext, zcontext, &zcontext->operands[0], runtime_address);
-		 break;
-	    }
+                    case 8:  mask = 0xFF;   break;
+                    case 16: mask = 0xFFFF; break;
+                    default: mask = 0xFFFFFFFF; break;
+                 }
+                 
+                 LLVMValueRef result = LLVMBuildAnd(jcontext->builder, value,
+                                     LLVMConstInt(i64, mask, 0), "movzx_res");
+                 set_operand_value(result, jcontext, zcontext, &zcontext->operands[0], runtime_address);
+                 break;
+            }
             
             case ZYDIS_MNEMONIC_LEA: {
                 LLVMValueRef addr = compute_mem_addr(jcontext, &zcontext->operands[1],
                                                      zcontext->instruction, runtime_address);
                 set_operand_value(addr, jcontext, zcontext, &zcontext->operands[0], runtime_address);
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_MOVSXD: {
+                LLVMValueRef trunc = LLVMBuildTrunc(jcontext->builder, value, LLVMInt32Type(), "sxd_trunc");
+                LLVMValueRef sext  = LLVMBuildSExt(jcontext->builder, trunc, i64, "sxd_sext");
+                set_operand_value(sext, jcontext, zcontext, &zcontext->operands[0], runtime_address);
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_CMOVNZ: {
+                LLVMValueRef zf = LLVMBuildLoad2(jcontext->builder, i8,
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 2), "zf");
+                LLVMValueRef cond = LLVMBuildICmp(jcontext->builder, LLVMIntEQ,
+                    zf, LLVMConstInt(i8, 0, 0), "cmovnz_cond");
+                LLVMValueRef dst = get_operand_value(jcontext, zcontext,
+                    &zcontext->operands[0], runtime_address, phnum);
+                LLVMValueRef result = LLVMBuildSelect(jcontext->builder, cond, value, dst, "cmovnz_res");
+                set_operand_value(result, jcontext, zcontext, &zcontext->operands[0], runtime_address);
                 break;
             }
             
@@ -607,12 +626,8 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 
                 LLVMTypeRef i8ptr = LLVMPointerType(i8, 0);
                 
-                #define G2H(val) LLVMBuildAdd(jcontext->builder, \
-                    LLVMBuildSub(jcontext->builder, (val), LLVMConstInt(i64, base_vaddr, 0), "sub_base"), \
-                    LLVMConstInt(i64, (uint64_t)mem_image, 0), "add_image")
-                
-                LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, G2H(rsi_val), i8ptr, "src_ptr");
-                LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, G2H(rdi_val), i8ptr, "dst_ptr");
+                LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, GUEST_TO_HOST(jcontext->builder, rsi_val), i8ptr, "src_ptr");
+                LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, GUEST_TO_HOST(jcontext->builder, rdi_val), i8ptr, "dst_ptr");
                 
                 if (zcontext->instruction.attributes & ZYDIS_ATTRIB_HAS_REP) {
                     LLVMBuildMemMove(jcontext->builder, dst_ptr, 1, src_ptr, 1, rcx_val);
@@ -626,7 +641,6 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                     set_operand_value(LLVMBuildAdd(jcontext->builder, rdi_val, LLVMConstInt(i64, 1, 0), "rdi_inc"), jcontext, zcontext, &fake_rdi, runtime_address);
                 }
                 
-                #undef G2H
                 break;
             }
 
@@ -641,18 +655,14 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 
                 LLVMTypeRef i8ptr = LLVMPointerType(i8, 0);
                 
-                #define G2H(val) LLVMBuildAdd(jcontext->builder, \
-                    LLVMBuildSub(jcontext->builder, (val), LLVMConstInt(i64, base_vaddr, 0), "sub_base"), \
-                    LLVMConstInt(i64, (uint64_t)mem_image, 0), "add_image")
-                
                 if (zcontext->instruction.attributes & ZYDIS_ATTRIB_HAS_REPE) {
                     LLVMTypeRef memcmp_type = LLVMFunctionType(LLVMInt32Type(), (LLVMTypeRef[]){ i8ptr, i8ptr, i64 }, 3, 0);
                     LLVMValueRef memcmp_fn = LLVMGetNamedFunction(jcontext->mod, "memcmp");
                     if (!memcmp_fn)
                         memcmp_fn = LLVMAddFunction(jcontext->mod, "memcmp", memcmp_type);
                     
-                    LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, G2H(rsi_val), i8ptr, "cmp_src");
-                    LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, G2H(rdi_val), i8ptr, "cmp_dst");
+                    LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, GUEST_TO_HOST(jcontext->builder, rsi_val), i8ptr, "cmp_src");
+                    LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, GUEST_TO_HOST(jcontext->builder, rdi_val), i8ptr, "cmp_dst");
                     
                     LLVMValueRef result = LLVMBuildCall2(jcontext->builder, memcmp_type, memcmp_fn,
                         (LLVMValueRef[]){ src_ptr, dst_ptr, rcx_val }, 3, "memcmp_result");
@@ -666,7 +676,6 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                     set_operand_value(LLVMConstInt(i64, 0, 0), jcontext, zcontext, &fake_rcx, runtime_address);
                 }
                 
-                #undef G2H
                 break;
             }
             

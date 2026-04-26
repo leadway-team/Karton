@@ -66,7 +66,7 @@ void helper_syscall(CPUState *cpu) {
         }
         cpu->gprs[0] = syscall(rax, sargs[0], sargs[1], sargs[2], sargs[3], sargs[4], sargs[5]);
     } else {
-        printf("JSON file doesn't contain required syscall!\n");
+        printf("JSON file doesn't contain required syscall! RAX: %lu\n", rax);
         printf("Internal error code 7\n");
         exit(7);
     }

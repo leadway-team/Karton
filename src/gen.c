@@ -643,6 +643,39 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 
                 break;
             }
+            
+            case ZYDIS_MNEMONIC_MOVSQ: {
+                ZydisDecodedOperand fake_rsi = {0}; fake_rsi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rsi.reg.value = ZYDIS_REGISTER_RSI;
+                ZydisDecodedOperand fake_rdi = {0}; fake_rdi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rdi.reg.value = ZYDIS_REGISTER_RDI;
+                ZydisDecodedOperand fake_rcx = {0}; fake_rcx.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rcx.reg.value = ZYDIS_REGISTER_RCX;
+                
+                LLVMValueRef rsi_val = get_operand_value(jcontext, zcontext, &fake_rsi, runtime_address, phnum);
+                LLVMValueRef rdi_val = get_operand_value(jcontext, zcontext, &fake_rdi, runtime_address, phnum);
+                LLVMValueRef rcx_val = get_operand_value(jcontext, zcontext, &fake_rcx, runtime_address, phnum);
+                
+                LLVMTypeRef i64ptr = LLVMPointerType(i64, 0);
+                LLVMTypeRef i8ptr = LLVMPointerType(i8, 0);
+                
+                if (zcontext->instruction.attributes & ZYDIS_ATTRIB_HAS_REP) {
+                    LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, GUEST_TO_HOST(jcontext->builder, rsi_val), i8ptr, "src_ptr");
+                    LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, GUEST_TO_HOST(jcontext->builder, rdi_val), i8ptr, "dst_ptr");
+                    LLVMValueRef byte_count = LLVMBuildMul(jcontext->builder, rcx_val,
+                                              LLVMConstInt(i64, 8, 0), "movsq_bytes");
+                    LLVMBuildMemMove(jcontext->builder, dst_ptr, 8, src_ptr, 8, byte_count);
+                    set_operand_value(LLVMBuildAdd(jcontext->builder, rsi_val, byte_count, "rsi_new"), jcontext, zcontext, &fake_rsi, runtime_address);
+                    set_operand_value(LLVMBuildAdd(jcontext->builder, rdi_val, byte_count, "rdi_new"), jcontext, zcontext, &fake_rdi, runtime_address);
+                    set_operand_value(LLVMConstInt(i64, 0, 0),                                         jcontext, zcontext, &fake_rcx, runtime_address);
+                } else {
+                    LLVMValueRef src_ptr = LLVMBuildIntToPtr(jcontext->builder, GUEST_TO_HOST(jcontext->builder, rsi_val), i64ptr, "src_ptr");
+                    LLVMValueRef dst_ptr = LLVMBuildIntToPtr(jcontext->builder, GUEST_TO_HOST(jcontext->builder, rdi_val), i64ptr, "dst_ptr");
+                    LLVMValueRef qword = LLVMBuildLoad2(jcontext->builder, i64, src_ptr, "movsq_qword");
+                    LLVMBuildStore(jcontext->builder, qword, dst_ptr);
+                    set_operand_value(LLVMBuildAdd(jcontext->builder, rsi_val, LLVMConstInt(i64, 8, 0), "rsi_inc"), jcontext, zcontext, &fake_rsi, runtime_address);
+                    set_operand_value(LLVMBuildAdd(jcontext->builder, rdi_val, LLVMConstInt(i64, 8, 0), "rdi_inc"), jcontext, zcontext, &fake_rdi, runtime_address);
+                }
+                
+                break;
+            }
 
             case ZYDIS_MNEMONIC_CMPSB: {
                 ZydisDecodedOperand fake_rsi = {0}; fake_rsi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rsi.reg.value = ZYDIS_REGISTER_RSI;

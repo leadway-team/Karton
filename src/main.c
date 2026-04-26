@@ -138,11 +138,13 @@ int main(int argc, char** argv) {
         if (phdr.p_vaddr + phdr.p_memsz > top_vaddr) top_vaddr = phdr.p_vaddr + phdr.p_memsz;
     }
     
-    mem_image = calloc(1, top_vaddr - base_vaddr);
-    if (!mem_image) {
-        printf("calloc error, internal error code 2.\n");
-        return 2;
-    }
+    uint64_t stack_top = top_vaddr + 8388608 * 2;
+    mem_image = calloc(1, stack_top - base_vaddr);
+    //mem_image = calloc(1, top_vaddr - base_vaddr);
+    //if (!mem_image) {
+    //    printf("calloc error, internal error code 2.\n");
+    //    return 2;
+    //}
     
     for (ZyanUSize i = 0; i < phnum; i++) {
         GElf_Phdr phdr;
@@ -167,7 +169,7 @@ int main(int argc, char** argv) {
     munmap(raw_bin, file_size);
     raw_bin = NULL;
     
-    cpu.gprs[4] = (uint64_t)mmap(NULL, 8388608, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) + 8388608;
+    cpu.gprs[4] = top_vaddr + 8388608;
     
     JITCtx jcontext;
     jcontext.mod = LLVMModuleCreateWithName("karton_module");
@@ -232,6 +234,7 @@ int main(int argc, char** argv) {
     printf("Entry point address: 0x%lx\n", entry_point);
     printf("base_vaddr: 0x%lx  top_vaddr: 0x%lx  image_size: 0x%lx\n",
            base_vaddr, top_vaddr, top_vaddr - base_vaddr);
+           printf("mem_image: %p\n", mem_image);
     #endif
     
     signal(SIGPIPE, SIG_IGN);

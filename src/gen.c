@@ -1,5 +1,11 @@
 #include "karton.h"
 
+#define GUEST_TO_HOST(builder, guest_val) \
+    LLVMBuildAdd((builder), \
+        LLVMBuildSub((builder), (guest_val), \
+            LLVMConstInt(i64, base_vaddr, 0), "g2h_sub"), \
+        LLVMConstInt(i64, (uint64_t)mem_image, 0), "g2h_add")
+
 GElf_Phdr* find_phdr(ZyanUSize phnum, uint64_t addr) {
     for (ZyanUSize i = 0; i < phnum; i++) {
         if (phdrs[i].p_type == PT_LOAD && addr >= phdrs[i].p_vaddr && addr < (phdrs[i].p_vaddr + phdrs[i].p_memsz)) {
@@ -395,7 +401,8 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 LLVMValueRef new_rsp = LLVMBuildSub(jcontext->builder, rsp_val, LLVMConstInt(i64, 8, 0), "new_rsp");
                 LLVMBuildStore(jcontext->builder, new_rsp, rsp_ptr);
                 
-                LLVMValueRef mem_ptr = LLVMBuildIntToPtr(jcontext->builder, new_rsp, LLVMPointerType(i64, 0), "mem_ptr");
+                LLVMValueRef host_rsp = GUEST_TO_HOST(jcontext->builder, new_rsp);
+                LLVMValueRef mem_ptr = LLVMBuildIntToPtr(jcontext->builder, host_rsp, LLVMPointerType(i64, 0), "mem_ptr");
                 LLVMBuildStore(jcontext->builder, LLVMConstInt(i64, runtime_address + zcontext->instruction.length, 0), mem_ptr);
                 
                 ZydisDecodedOperand fake_operand = {0}; fake_operand.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_operand.reg.value = ZYDIS_REGISTER_RIP;
@@ -409,7 +416,8 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 LLVMValueRef rsp_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 4);
                 LLVMValueRef rsp_val = LLVMBuildLoad2(jcontext->builder, i64, rsp_ptr, "rsp_val");
                 
-                LLVMValueRef mem_ptr = LLVMBuildIntToPtr(jcontext->builder, rsp_val, LLVMPointerType(i64, 0), "mem_ptr");
+                LLVMValueRef host_rsp = GUEST_TO_HOST(jcontext->builder, rsp_val);
+                LLVMValueRef mem_ptr = LLVMBuildIntToPtr(jcontext->builder, host_rsp, LLVMPointerType(i64, 0), "mem_ptr");
                 LLVMValueRef ret_val = LLVMBuildLoad2(jcontext->builder, i64, mem_ptr, "ret_val");
                 
                 LLVMValueRef new_rsp = LLVMBuildAdd(jcontext->builder, rsp_val, LLVMConstInt(i64, 8, 0), "new_rsp");
@@ -426,6 +434,20 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 set_operand_value(value, jcontext, zcontext, &zcontext->operands[0], runtime_address);
                 break;
             }
+            
+            case ZYDIS_MNEMONIC_MOVZX: {
+		 uint64_t mask;
+		 switch (zcontext->operands[1].size) {
+		    case 8:  mask = 0xFF;   break;
+		    case 16: mask = 0xFFFF; break;
+		    default: mask = 0xFFFFFFFF; break;
+		 }
+		 
+		 LLVMValueRef result = LLVMBuildAnd(jcontext->builder, value,
+			LLVMConstInt(i64, mask, 0), "movzx_res");
+		 set_operand_value(result, jcontext, zcontext, &zcontext->operands[0], runtime_address);
+		 break;
+	    }
             
             case ZYDIS_MNEMONIC_LEA: {
                 LLVMValueRef addr = compute_mem_addr(jcontext, &zcontext->operands[1],
@@ -654,7 +676,8 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 LLVMValueRef new_rsp = LLVMBuildSub(jcontext->builder, rsp_val, LLVMConstInt(i64, 8, 0), "new_rsp");
                 LLVMBuildStore(jcontext->builder, new_rsp, rsp_ptr);
                 
-                LLVMValueRef mem_ptr = LLVMBuildIntToPtr(jcontext->builder, new_rsp, LLVMPointerType(i64, 0), "mem_ptr");
+                LLVMValueRef host_rsp = GUEST_TO_HOST(jcontext->builder, new_rsp);
+                LLVMValueRef mem_ptr = LLVMBuildIntToPtr(jcontext->builder, host_rsp, LLVMPointerType(i64, 0), "mem_ptr");
                 LLVMBuildStore(jcontext->builder, value, mem_ptr);
                 break;
             }
@@ -663,7 +686,8 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 LLVMValueRef rsp_ptr = get_reg_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 4);
                 LLVMValueRef rsp_val = LLVMBuildLoad2(jcontext->builder, i64, rsp_ptr, "rsp_val");
                 
-                LLVMValueRef mem_ptr = LLVMBuildIntToPtr(jcontext->builder, rsp_val, LLVMPointerType(i64, 0), "mem_ptr");
+                LLVMValueRef host_rsp = GUEST_TO_HOST(jcontext->builder, rsp_val);
+                LLVMValueRef mem_ptr = LLVMBuildIntToPtr(jcontext->builder, host_rsp, LLVMPointerType(i64, 0), "mem_ptr");
                 LLVMValueRef pop_val = LLVMBuildLoad2(jcontext->builder, i64, mem_ptr, "pop_val");
                 
                 LLVMValueRef new_rsp = LLVMBuildAdd(jcontext->builder, rsp_val, LLVMConstInt(i64, 8, 0), "new_rsp");

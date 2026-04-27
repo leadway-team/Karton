@@ -228,6 +228,24 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 break;
             }
             
+            case ZYDIS_MNEMONIC_JS: {
+                uint64_t new_addr;
+                ZydisCalcAbsoluteAddress(&zcontext->instruction, &zcontext->operands[0], runtime_address, &new_addr);
+                uint64_t old_addr = runtime_address + zcontext->instruction.length;
+                
+                LLVMValueRef sf = LLVMBuildLoad2(jcontext->builder, i8,
+                    get_flag_ptr(jcontext->builder, jcontext->cpu_ptr, jcontext->cpu_struct_type, 3), "sf");
+                LLVMValueRef cond = LLVMBuildICmp(jcontext->builder, LLVMIntNE, sf, LLVMConstInt(i8, 0, 0), "js_cond");
+                LLVMValueRef new_rip = LLVMBuildSelect(jcontext->builder, cond,
+                    LLVMConstInt(i64, new_addr, 0), LLVMConstInt(i64, old_addr, 0), "js_rip");
+                
+                ZydisDecodedOperand fake_rip = {0}; fake_rip.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rip.reg.value = ZYDIS_REGISTER_RIP;
+                set_operand_value(new_rip, jcontext, zcontext, &fake_rip, runtime_address);
+                
+                offset = phdr->p_filesz;
+                break;
+            }
+            
             case ZYDIS_MNEMONIC_JNZ: {
                 uint64_t new_addr;
                 ZydisCalcAbsoluteAddress(&zcontext->instruction, &zcontext->operands[0], runtime_address, &new_addr);

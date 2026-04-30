@@ -41,6 +41,16 @@ LLVMValueRef get_flag_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMType
     return LLVMBuildInBoundsGEP2(builder, cpu_type, cpu_ptr, indices, 2, "flag_ptr");
 }
 
+LLVMValueRef get_xmm_ptr(LLVMBuilderRef builder, LLVMValueRef cpu_ptr, LLVMTypeRef cpu_type, int reg_idx, int half) {
+    LLVMValueRef indices[] = {
+        LLVMConstInt(i64, 0, 0),
+        LLVMConstInt(LLVMInt32Type(), 9, 0),
+        LLVMConstInt(i64, reg_idx, 0),
+        LLVMConstInt(i64, half, 0)
+    };
+    return LLVMBuildInBoundsGEP2(builder, cpu_type, cpu_ptr, indices, 4, "xmm_ptr");
+}
+
 int get_register_index(ZydisRegister reg) {
     if (reg >= ZYDIS_REGISTER_RAX && reg <= ZYDIS_REGISTER_RDI)
         return reg - ZYDIS_REGISTER_RAX;
@@ -51,6 +61,27 @@ int get_register_index(ZydisRegister reg) {
     if (reg == ZYDIS_REGISTER_EIP || reg == ZYDIS_REGISTER_RIP)
         return 16;
     return -1;
+}
+
+int get_xmm_index(ZydisRegister reg) {
+    if (reg >= ZYDIS_REGISTER_XMM0 && reg <= ZYDIS_REGISTER_XMM15)
+        return reg - ZYDIS_REGISTER_XMM0;
+    return -1;
+}
+
+LLVMValueRef get_xmm_lo(JITCtx *jcontext, int xmm_idx) {
+    LLVMValueRef ptr = get_xmm_ptr(jcontext->builder, jcontext->cpu_ptr,
+                                    jcontext->cpu_struct_type, xmm_idx, 0);
+    return LLVMBuildLoad2(jcontext->builder, i64, ptr, "xmm_lo");
+}
+
+void set_xmm_lo(JITCtx *jcontext, int xmm_idx, LLVMValueRef val) {
+    LLVMBuildStore(jcontext->builder, val,
+        get_xmm_ptr(jcontext->builder, jcontext->cpu_ptr,
+                    jcontext->cpu_struct_type, xmm_idx, 0));
+    LLVMBuildStore(jcontext->builder, LLVMConstInt(i64, 0, 0),
+        get_xmm_ptr(jcontext->builder, jcontext->cpu_ptr,
+                    jcontext->cpu_struct_type, xmm_idx, 1));
 }
 
 LLVMValueRef compute_mem_addr(JITCtx *jcontext, ZydisDecodedOperand *operand, ZydisDecodedInstruction instruction, int64_t runtime_address) {
@@ -662,6 +693,24 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                 break;
             }
             
+            case ZYDIS_MNEMONIC_MOVQ: {
+                ZydisRegister dst_reg = zcontext->operands[0].reg.value;
+                ZydisRegister src_reg = zcontext->operands[1].reg.value;
+                int dst_xmm = get_xmm_index(dst_reg);
+                int src_xmm = get_xmm_index(src_reg);
+                
+                if (dst_xmm >= 0) {
+                    LLVMValueRef src_val = (src_xmm >= 0)
+                        ? get_xmm_lo(jcontext, src_xmm)
+                        : get_operand_value(jcontext, zcontext, &zcontext->operands[1], runtime_address, phnum);
+                    set_xmm_lo(jcontext, dst_xmm, src_val);
+                } else {
+                    LLVMValueRef src_val = get_xmm_lo(jcontext, src_xmm);
+                    set_operand_value(src_val, jcontext, zcontext, &zcontext->operands[0], runtime_address);
+                }
+                break;
+            }
+            
             case ZYDIS_MNEMONIC_MOVSQ: {
                 ZydisDecodedOperand fake_rsi = {0}; fake_rsi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rsi.reg.value = ZYDIS_REGISTER_RSI;
                 ZydisDecodedOperand fake_rdi = {0}; fake_rdi.type = ZYDIS_OPERAND_TYPE_REGISTER; fake_rdi.reg.value = ZYDIS_REGISTER_RDI;
@@ -836,6 +885,20 @@ void gen_ir(GElf_Phdr *phdr, ZyanUSize phnum, ZydisCtx *zcontext, JITCtx *jconte
                         jcontext, zcontext, &fake_operand, runtime_address);
                     offset = phdr->p_filesz; // break "while"
                 }
+                break;
+            }
+            
+            case ZYDIS_MNEMONIC_PUNPCKLQDQ: {
+                int dst_idx = get_xmm_index(zcontext->operands[0].reg.value);
+                int src_idx = get_xmm_index(zcontext->operands[1].reg.value);
+                
+                LLVMValueRef src_val = (src_idx >= 0)
+                    ? get_xmm_lo(jcontext, src_idx)
+                    : get_operand_value(jcontext, zcontext, &zcontext->operands[1], runtime_address, phnum);
+                
+                LLVMBuildStore(jcontext->builder, src_val,
+                    get_xmm_ptr(jcontext->builder, jcontext->cpu_ptr,
+                                jcontext->cpu_struct_type, dst_idx, 1));
                 break;
             }
             

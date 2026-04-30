@@ -8,5 +8,6 @@
   "49": { "native": 200, "argc": 3, "args": ["rdi", "*rsi", "rdx"] },
   "50": { "native": 201, "argc": 2, "args": ["rdi", "rsi"] },
   "60": { "native": 93,  "argc": 1, "args": ["rdi"] },
-  "201": { "native": 169, "argc": 2, "args": ["*rdi", "*rsi"] }
+  "201": { "native": 169, "argc": 2, "args": ["*rdi", "*rsi"] },
+  "218": { "native": 96, "argc": 1, "args": ["*rdi"] }
 }

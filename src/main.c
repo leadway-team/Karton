@@ -9,7 +9,7 @@ uint8_t  *mem_image;
 uint64_t  base_vaddr;
 
 int main(int argc, char** argv) {
-    printf("Karton Emu ; 04.2026\n");
+    printf("Karton Emu ; 05.2026\n");
     errno = 0;
     
     if (argc != 2) {
@@ -180,8 +180,8 @@ int main(int argc, char** argv) {
     i8  = LLVMInt8Type();
     
     LLVMTypeRef array_type = LLVMArrayType(i64, 16);
-    LLVMTypeRef fields[]   = { array_type, i64, i8, i8, i8, i8, i8, i64 };
-    LLVMStructSetBody(jcontext.cpu_struct_type, fields, 8, 0);
+    LLVMTypeRef fields[]   = { array_type, i64, i8, i8, i8, i8, i8, LLVMArrayType(i8, 3), i64, LLVMArrayType(LLVMArrayType(i64, 2), 16) };
+    LLVMStructSetBody(jcontext.cpu_struct_type, fields, 10, 0);
     jcontext.cpu_ptr_type = LLVMPointerType(jcontext.cpu_struct_type, 0);
     
     LLVMTypeRef param_types[] = { jcontext.cpu_ptr_type };

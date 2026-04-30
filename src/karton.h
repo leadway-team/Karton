@@ -35,7 +35,9 @@ typedef struct {
     uint8_t cf;
     uint8_t of;
     uint8_t df;
+    uint8_t  _pad[3];
     uint64_t fs_base;
+    uint64_t xmm[16][2];
 } CPUState;
 
 typedef struct {

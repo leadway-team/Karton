@@ -7,6 +7,7 @@ CPUState cpu = {0};
 Cache block_cache[65536] = {0};
 uint8_t  *mem_image;
 uint64_t  base_vaddr;
+uint64_t image_size = 0;
 
 int main(int argc, char** argv) {
     printf("Karton Emu ; 05.2026\n");
@@ -139,7 +140,8 @@ int main(int argc, char** argv) {
     }
     
     uint64_t stack_top = top_vaddr + 8388608 * 2;
-    mem_image = calloc(1, stack_top - base_vaddr);
+    image_size = stack_top - base_vaddr;
+    mem_image = calloc(1, image_size);
     //mem_image = calloc(1, top_vaddr - base_vaddr);
     //if (!mem_image) {
     //    printf("calloc error, internal error code 2.\n");
@@ -169,7 +171,18 @@ int main(int argc, char** argv) {
     munmap(raw_bin, file_size);
     raw_bin = NULL;
     
-    cpu.gprs[4] = top_vaddr + 8388608;
+    uint64_t rand_addr = top_vaddr + 8388608 - 16;
+    getrandom(access_quest(rand_addr), 16, 0);
+    
+    cpu.gprs[4] = rand_addr;
+    cpu.gprs[4] -= 8; *(uint64_t*)access_quest(cpu.gprs[4]) = 0;
+    cpu.gprs[4] -= 8; *(uint64_t*)access_quest(cpu.gprs[4]) = 0;
+    cpu.gprs[4] -= 8; *(uint64_t*)access_quest(cpu.gprs[4]) = rand_addr;
+    cpu.gprs[4] -= 8; *(uint64_t*)access_quest(cpu.gprs[4]) = 25;
+    
+    cpu.gprs[4] -= 8; *(uint64_t*)access_quest(cpu.gprs[4]) = 0;
+    cpu.gprs[4] -= 8; *(uint64_t*)access_quest(cpu.gprs[4]) = 0;
+    cpu.gprs[4] -= 8; *(uint64_t*)access_quest(cpu.gprs[4]) = 0;
     
     JITCtx jcontext;
     jcontext.mod = LLVMModuleCreateWithName("karton_module");

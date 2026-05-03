@@ -64,6 +64,32 @@ void helper_syscall(CPUState *cpu) {
                 sargs[i] = (uint64_t)access_quest(sargs[i]);
             }
         }
+        
+        //NOTE: Not innovative, but hacks ; will be removed soon
+        if (rax == 98 && (rsi & 0x7f) == 0) {
+            int32_t *addr = (int32_t*)sargs[0];
+            int32_t  val  = (int32_t)sargs[2];
+            if (*addr == val) {
+                *addr = 0;
+                cpu->gprs[0] = 0;
+            } else {
+                cpu->gprs[0] = -EAGAIN;
+            }
+            return;
+        }
+        
+        if (rax == 66) { // writev ; still not innovative hack
+            struct iovec *guest_iov = (struct iovec*)sargs[1];
+            int iovcnt = (int)sargs[2];
+            struct iovec host_iov[iovcnt];
+            for (int i = 0; i < iovcnt; i++) {
+                host_iov[i].iov_base = access_quest((uint64_t)guest_iov[i].iov_base);
+                host_iov[i].iov_len  = guest_iov[i].iov_len;
+            }
+            cpu->gprs[0] = syscall(66, sargs[0], host_iov, iovcnt);
+            return;
+        }
+        
         cpu->gprs[0] = syscall(rax, sargs[0], sargs[1], sargs[2], sargs[3], sargs[4], sargs[5]);
     } else {
         //TODO: if -> switch case

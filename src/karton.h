@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <libgen.h>
 #include <signal.h>
+#include <sys/random.h>
 
 #include <json-c/json.h>
 #include <json-c/json_util.h>
@@ -26,6 +27,8 @@
 #include <llvm-c/ExecutionEngine.h>
 #include <llvm-c/Orc.h>
 #include <llvm-c/LLJIT.h>
+
+void dbg_print(const char* msg, uint64_t val);
 
 typedef struct {
     uint64_t gprs[16];
@@ -74,6 +77,7 @@ extern CPUState cpu;
 extern Cache block_cache[65536];
 extern uint8_t  *mem_image;
 extern uint64_t  base_vaddr;
+extern uint64_t image_size;
 
 /* see exec.c */
 extern struct json_object *jsoncalls;
